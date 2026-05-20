@@ -1,10 +1,10 @@
-FROM nvidia/cuda:12.3.2-base-ubuntu22.04
+FROM nvidia/cuda:12.4.0-base-ubuntu22.04
 
 # Apt packages — own layer so pip changes don't re-run apt
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
-        ffmpeg python3 python3-pip curl gosu tzdata
+        ffmpeg python3 python3-pip curl gosu tzdata libsndfile1
 
 # Torch — large and rarely changes; own layer so requirements.txt changes don't bust it
 RUN --mount=type=cache,target=/root/.cache/pip \

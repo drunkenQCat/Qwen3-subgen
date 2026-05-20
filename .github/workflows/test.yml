@@ -31,7 +31,7 @@ jobs:
           restore-keys: pip-${{ matrix.python-version }}-
 
       - name: Install test dependencies
-        # Note: heavy ML packages (stable-ts, faster-whisper, torch) are NOT installed.
+        # Note: heavy ML packages (qwen-asr, torch) are NOT installed.
         # They are mocked in tests/conftest.py so CI stays fast and GPU-free.
         run: pip install -r requirements-test.txt
 

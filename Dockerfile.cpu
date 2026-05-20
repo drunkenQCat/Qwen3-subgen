@@ -3,11 +3,11 @@ FROM python:3.11-slim-bullseye AS builder
 
 WORKDIR /subgen
 
-# Runtime build tools only — git and ffmpeg not needed here
+# Runtime build tools only
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
-        tzdata
+        tzdata libsndfile1
 
 # Torch — own layer so requirements.txt changes don't bust it
 RUN --mount=type=cache,target=/root/.cache/pip \
@@ -28,7 +28,7 @@ WORKDIR /subgen
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
-        ffmpeg curl gosu tzdata \
+        ffmpeg curl gosu tzdata libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder

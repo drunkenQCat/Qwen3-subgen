@@ -1,9 +1,11 @@
 numpy
-stable-ts-whisperless
+soundfile
+qwen-asr
 fastapi
 requests
-faster-whisper
 uvicorn
 python-multipart
 ffmpeg-python
 watchdog
+torch
+torchaudio

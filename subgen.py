@@ -3,6 +3,9 @@ subgen_version = '2026.05.3'
 """
 ENVIRONMENT VARIABLES DOCUMENTATION
 
+This is the Qwen3-ASR fork of Subgen, replacing faster-whisper with Qwen3-ASR
+for multilingual speech recognition.
+
 This application supports both new standardized environment variable names and legacy names for backwards compatibility. The new names follow a consistent naming convention: 
 
 STANDARDIZED NAMING CONVENTION:
@@ -13,7 +16,7 @@ STANDARDIZED NAMING CONVENTION:
   * PROCESS_* for media processing triggers
   * SKIP_* for all skip conditions
   * SUBTITLE_* for subtitle-related settings
-  * WHISPER_* for Whisper model settings
+  * ASR_* for Qwen3-ASR model settings
   * TRANSCRIBE_* for transcription settings
 
 BACKWARDS COMPATIBILITY: 
@@ -36,6 +39,8 @@ NEW NAME → OLD NAME (for backwards compatibility):
 - SKIP_IF_AUDIO_LANGUAGES → SKIP_IF_AUDIO_TRACK_IS
 - SKIP_ONLY_SUBGEN_SUBTITLES → ONLY_SKIP_IF_SUBGEN_SUBTITLE
 - SKIP_IF_NO_LANGUAGE_BUT_SUBTITLES_EXIST → SKIP_IF_LANGUAGE_IS_NOT_SET_BUT_SUBTITLES_EXIST
+- ASR_MODEL → WHISPER_MODEL
+- ASR_THREADS → WHISPER_THREADS
 
 MIGRATION GUIDE:
 Users can gradually migrate to the new names. Both will work simultaneously during the
@@ -48,6 +53,7 @@ import ctypes
 import ctypes.util
 import gc
 import hashlib
+import io
 import json
 import logging
 import os
@@ -63,19 +69,19 @@ from threading import Event, Lock, Timer
 from typing import List, Union
 
 import av
-import faster_whisper
 import ffmpeg
 import numpy as np
 import requests
-import stable_whisper
 import torch
 from fastapi import Body, FastAPI, File, Form, Header, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
-from stable_whisper import Segment
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers.polling import PollingObserver as Observer
 
 from language_code import LanguageCode
+
+import soundfile as sf
+from qwen_asr import Qwen3ASRModel
 
 
 def convert_to_bool(in_bool):
@@ -113,11 +119,14 @@ plexserver = get_env_with_fallback('PLEX_SERVER', 'PLEXSERVER', 'http://192.168.
 jellyfintoken = get_env_with_fallback('JELLYFIN_TOKEN', 'JELLYFINTOKEN', 'token here')
 jellyfinserver = get_env_with_fallback('JELLYFIN_SERVER', 'JELLYFINSERVER', 'http://192.168.1.111:8096')
 
-# Whisper Configuration
-whisper_model = os.getenv('WHISPER_MODEL', 'medium')
-whisper_threads = int(os.getenv('WHISPER_THREADS', 4))
+# Whisper Configuration - with backwards compatibility for Qwen3-ASR fork
+whisper_model = get_env_with_fallback('ASR_MODEL', 'WHISPER_MODEL', 'Qwen/Qwen3-ASR-0.6B')
+whisper_threads = int(get_env_with_fallback('ASR_THREADS', 'WHISPER_THREADS', 4))
+model_display_name = whisper_model.replace('/', '-')  # safe for filenames
 concurrent_transcriptions = int(os.getenv('CONCURRENT_TRANSCRIPTIONS', 2))
 transcribe_device = os.getenv('TRANSCRIBE_DEVICE', 'cpu')
+forced_aligner_model = os.getenv('FORCED_ALIGNER_MODEL', '')
+use_forced_aligner = convert_to_bool(os.getenv('USE_FORCED_ALIGNER', False))
 
 # Processing Control - with backwards compatibility
 procaddedmedia = get_env_with_fallback('PROCESS_ADDED_MEDIA', 'PROCADDEDMEDIA', True, convert_to_bool)
@@ -138,7 +147,6 @@ monitor = convert_to_bool(os.getenv('MONITOR', False))
 transcribe_folders = os.getenv('TRANSCRIBE_FOLDERS', '')
 transcribe_or_translate = os.getenv('TRANSCRIBE_OR_TRANSLATE', 'transcribe').lower()
 clear_vram_on_complete = convert_to_bool(os.getenv('CLEAR_VRAM_ON_COMPLETE', True))
-compute_type = os.getenv('COMPUTE_TYPE', 'auto')
 append = convert_to_bool(os.getenv('APPEND', False))
 reload_script_on_change = convert_to_bool(os.getenv('RELOAD_SCRIPT_ON_CHANGE', False))
 lrc_for_audio_files = convert_to_bool(os.getenv('LRC_FOR_AUDIO_FILES', True))
@@ -202,6 +210,202 @@ AUDIO_EXTENSIONS = (
     ".aiff", ".aif", ".pcm", ".ra", ".ram", ".mid", ".midi", ".ape", ".wv", 
     ".amr", ".vox", ".tak", ".spx", ".m4b", ".mka"
 )
+
+# ============================================================================
+# QWEN3-ASR ADAPTER: Wraps Qwen3-ASR to match stable-whisper / faster-whisper interface
+# ============================================================================
+
+QWEN_LANG_TO_ISO = {
+    "Chinese": "zh", "English": "en", "Cantonese": "yue",
+    "Arabic": "ar", "German": "de", "French": "fr",
+    "Spanish": "es", "Portuguese": "pt", "Indonesian": "id",
+    "Italian": "it", "Korean": "ko", "Russian": "ru",
+    "Thai": "th", "Vietnamese": "vi", "Japanese": "ja",
+    "Turkish": "tr", "Hindi": "hi", "Malay": "ms",
+    "Dutch": "nl", "Swedish": "sv", "Danish": "da",
+    "Finnish": "fi", "Polish": "pl", "Czech": "cs",
+    "Filipino": "fil", "Persian": "fa", "Greek": "el",
+    "Hungarian": "hu", "Macedonian": "mk", "Romanian": "ro",
+}
+
+ISO_TO_QWEN_LANG = {v: k for k, v in QWEN_LANG_TO_ISO.items()}
+
+
+class QwenASRSegment:
+    """Adapter for Qwen3-ASR timestamp objects, mimics stable_whisper.Segment."""
+    def __init__(self, text, start, end, seg_id=0):
+        self.text = text
+        self._start = start
+        self._end = end
+        self.id = seg_id
+        self.words = []
+        self._default_start = start
+        self._default_end = end
+
+    @property
+    def start(self):
+        if self.words:
+            return self.words[0].start
+        return self._default_start
+
+    @start.setter
+    def start(self, v):
+        if self.words:
+            self.words[0].start = v
+        self._default_start = v
+
+    @property
+    def end(self):
+        if self.words:
+            return self.words[-1].end
+        return self._default_end
+
+    @end.setter
+    def end(self, v):
+        if self.words:
+            self.words[-1].end = v
+        self._default_end = v
+
+
+class QwenASRResult:
+    """Wraps a Qwen3-ASR transcription result, mimics stable_whisper result."""
+
+    def __init__(self, qwen_result):
+        lang_name = qwen_result.language or "English"
+        self.language = QWEN_LANG_TO_ISO.get(lang_name, lang_name[:2].lower())
+
+        if qwen_result.time_stamps and len(qwen_result.time_stamps) > 0:
+            self.segments = [
+                QwenASRSegment(ts.text, ts.start_time, ts.end_time, i)
+                for i, ts in enumerate(qwen_result.time_stamps)
+            ]
+            # Merge adjacent segments with the same text (Qwen3 sometimes splits sentences)
+            self._merge_adjacent()
+        else:
+            self.segments = [
+                QwenASRSegment(qwen_result.text, 0.0, 0.01, 0)
+            ]
+
+    def _merge_adjacent(self):
+        if len(self.segments) <= 1:
+            return
+        merged = [self.segments[0]]
+        for seg in self.segments[1:]:
+            prev = merged[-1]
+            if seg.text.strip() == prev.text.strip():
+                prev._end = seg.end
+                prev._default_end = seg.end
+            else:
+                merged.append(seg)
+        self.segments = merged
+
+    def to_srt_vtt(self, filepath=None, word_level=False):
+        srt = self._to_srt()
+        if filepath:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(srt)
+            return None
+        return srt
+
+    def _to_srt(self):
+        lines = []
+        for i, seg in enumerate(self.segments, 1):
+            lines.append(str(i))
+            lines.append(f"{self._fmt_srt_ts(seg.start)} --> {self._fmt_srt_ts(seg.end)}")
+            lines.append(seg.text.strip())
+            lines.append("")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _fmt_srt_ts(seconds):
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        s = int(seconds % 60)
+        ms = int((seconds % 1) * 1000)
+        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+class QwenASRModelWrapper:
+    """Wraps Qwen3ASRModel to provide stable-whisper-compatible interface."""
+
+    def __init__(self, model_path, device="cpu", cpu_threads=4,
+                 num_workers=1, download_root=None, compute_type="auto",
+                 use_aligner=False, aligner_path=None):
+        self.device = device
+        self.model_path = model_path
+        self._model = None
+        self._use_aligner = use_aligner and aligner_path
+
+        model_kwargs = {
+            "max_new_tokens": 1536,
+        }
+
+        if device == "cuda":
+            model_kwargs["device_map"] = "cuda:0"
+            model_kwargs["dtype"] = torch.bfloat16
+        else:
+            model_kwargs["device_map"] = "cpu"
+            model_kwargs["dtype"] = torch.float32
+
+        if self._use_aligner:
+            model_kwargs["forced_aligner"] = aligner_path
+            model_kwargs["forced_aligner_kwargs"] = dict(
+                dtype=model_kwargs["dtype"],
+                device_map=model_kwargs["device_map"],
+            )
+            logging.info(f"Qwen3-ASR: forced aligner enabled ({aligner_path})")
+
+        self._model = Qwen3ASRModel.from_pretrained(model_path, **model_kwargs)
+        logging.info(f"Qwen3-ASR model loaded: {model_path} on {device}")
+
+    def transcribe(self, audio, language=None, task="transcribe",
+                   verbose=None, progress_callback=None, **kwargs):
+        return_time_stamps = self._use_aligner
+
+        # Handle various audio input formats
+        if isinstance(audio, bytes):
+            audio = _decode_wav_bytes(audio)
+        elif isinstance(audio, np.ndarray):
+            audio = (audio.astype(np.float32), 16000)
+
+        # Convert language from ISO code to Qwen3-ASR full name
+        lang_name = None
+        if language:
+            lang_name = ISO_TO_QWEN_LANG.get(language, language)
+
+        # Translate task not supported by Qwen3-ASR; fall back to transcribe
+        if task == "translate":
+            logging.warning("Qwen3-ASR does not support translation. Falling back to transcribe.")
+            task = "transcribe"
+
+        results = self._model.transcribe(
+            audio=audio,
+            language=lang_name,
+            return_time_stamps=return_time_stamps,
+        )
+
+        return QwenASRResult(results[0])
+
+    @property
+    def model(self):
+        return self
+
+    def unload_model(self):
+        if self._model is not None:
+            del self._model
+            self._model = None
+            if self.device == "cuda" and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
+
+
+def _decode_wav_bytes(audio_bytes):
+    """Decode WAV bytes to (numpy_array, sample_rate) tuple."""
+    with io.BytesIO(audio_bytes) as f:
+        wav, sr = sf.read(f, dtype="float32", always_2d=False)
+    return (np.asarray(wav, dtype=np.float32), int(sr))
+
+# ============================================================================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -422,20 +626,14 @@ class MultiplePatternsFilter(logging.Filter):
     def filter(self, record):
         # Define the patterns to search for
         patterns =[
-            "Compression ratio threshold is not met",
-            "Processing segment at",
-            "Log probability threshold is",
-            "Reset prompt",
-            "Attempting to release",
-            "released on ",
-            "Attempting to acquire",
-            "acquired on",
             "header parsing failed",
             "timescale not set",
-            "misdetection possible",
             "srt was added",
             "doesn't have any audio to transcribe",
-            "Calling on_"
+            "Calling on_",
+            "tokenizer",
+            "special_tokens",
+            "Using a slow"
         ]
         # Return False if any of the patterns are found, True otherwise
         return not any(pattern in record.getMessage() for pattern in patterns)
@@ -514,10 +712,10 @@ def appendLine(result):
     if append:
         lastSegment = result.segments[-1]
         date_time_str = datetime.now().strftime("%d %b %Y - %H:%M:%S")
-        appended_text = f"Transcribed by whisperAI with faster-whisper ({whisper_model}) on {date_time_str}"
+        appended_text = f"Transcribed by Qwen3-ASR ({model_display_name}) on {date_time_str}"
         
         # Create a new segment with the updated information
-        newSegment = Segment(
+        newSegment = QwenASRSegment(
             start=lastSegment.start + TIME_OFFSET,
             end=lastSegment.end + TIME_OFFSET,
             text=appended_text,
@@ -544,7 +742,7 @@ def webui():
 
 @app.get("/status")
 def status():
-    return {"version": f"Subgen {subgen_version}, stable-ts {stable_whisper.__version__}, faster-whisper {faster_whisper.__version__} ({docker_status})"}
+    return {"version": f"Subgen (Qwen3-ASR) {subgen_version} ({docker_status})"}
 
 @app.post("/tautulli")
 def receive_tautulli_webhook(
@@ -803,7 +1001,7 @@ async def asr(
                 return StreamingResponse(
                     iter(task_result.result),
                     media_type="text/plain",
-                    headers={'Source': f'{task.capitalize()}d using stable-ts from Subgen!'}
+                    headers={'Source': f'{task.capitalize()}d using Qwen3-ASR from Subgen!'}
                 )
         else:
             logging.error(f"ASR task {task_id} timed out")
@@ -908,37 +1106,28 @@ def asr_task_worker(task_data: dict) -> None:
         task = task_data['task']
         language = task_data['language']
         video_file = task_data.get('video_file')
-        _initial_prompt = task_data.get('initial_prompt')
         file_content = task_data['audio_content']
         encode = task_data['encode']
         
         start_model()
 
-        args = {}
-        display_name = os.path.basename(video_file) if video_file else task_id
-        args['progress_callback'] = ProgressHandler(display_name)
-        
         # Handle audio encoding
         if encode:
-            args['audio'] = file_content
+            audio_input = file_content
         else:
-            args['audio'] = np.frombuffer(file_content, np.int16).flatten().astype(np.float32) / 32768.0
-            args['input_sr'] = 16000
+            audio_input = np.frombuffer(file_content, np.int16).flatten().astype(np.float32) / 32768.0
 
-        if custom_regroup and custom_regroup.lower() != 'default':
-            args['regroup'] = custom_regroup
-
-        args.update(kwargs)
-        
         # Detect audio start_time offset from source file (if accessible)
         audio_offset = get_audio_start_time(video_file) if video_file else 0.0
         
         # Perform transcription
-        result = model.transcribe(task=task, language=language, **args, verbose=None)
+        result = model.transcribe(
+            audio=audio_input,
+            language=language,
+            task=task,
+        )
         
         # Apply audio start_time offset to compensate for container timing
-        # Whisper ignores silence padding (adelay) from Bazarr, so timestamps
-        # are relative to audio stream start, not container start
         if audio_offset > 0:
             apply_timestamp_offset(result, audio_offset)
         
@@ -1036,7 +1225,7 @@ async def detect_language(
             audio_data = await get_audio_chunk(audio_file, detect_lang_offset, detect_lang_length)
 
         # Offload the heavy AI inference to a background thread
-        result = await asyncio.to_thread(model.transcribe, audio_data, input_sr=16000, verbose=False)
+        result = await asyncio.to_thread(model.transcribe, audio=audio_data)
         
         detected = LanguageCode.from_string(result.language)
         
@@ -1086,26 +1275,17 @@ def detect_language_from_upload(task_data: dict) -> None:
         
         start_model()
 
-        args = {}
-        args['progress_callback'] = None
-        
         # Handle audio extraction
         if encode:
-            audio_bytes = extract_audio_segment_from_content(
+            audio_input = extract_audio_segment_from_content(
                 file_content, 
                 detect_lang_offset, 
                 detect_lang_length
             )
-            args['audio'] = audio_bytes
-            args['input_sr'] = 16000
         else:
-            args['audio'] = np.frombuffer(file_content, np.int16).flatten().astype(np.float32) / 32768.0
-            args['input_sr'] = 16000
+            audio_input = np.frombuffer(file_content, np.int16).flatten().astype(np.float32) / 32768.0
 
-        args.update(kwargs)
-        args['verbose'] = False # Hide the confusing progress bar
-        
-        result = model.transcribe(**args)
+        result = model.transcribe(audio=audio_input)
         detected_language = LanguageCode.from_string(result.language)
         language_code = detected_language.to_iso_639_1()
         
@@ -1190,8 +1370,8 @@ def detect_language_task(path, original_task_data=None):
             int(detect_language_length)
         )
         
-        # FIX: Hide confusing progress bar and use from_string for ISO codes
-        result = model.transcribe(audio_segment, verbose=False)
+        # FIX: Use Qwen3-ASR for language detection (pass language=None for auto-detect)
+        result = model.transcribe(audio=audio_segment)
         detected_language = LanguageCode.from_string(result.language)
         
         logging.info(f"Detected language: {detected_language.to_name()}")
@@ -1270,7 +1450,14 @@ def start_model():
     with model_load_lock:
         if model is None:
             logging.debug("Model was purged, need to re-create")
-            model = stable_whisper.load_faster_whisper(whisper_model, download_root=model_location, device=transcribe_device, cpu_threads=whisper_threads, num_workers=concurrent_transcriptions, compute_type=compute_type)
+            model = QwenASRModelWrapper(
+                model_path=whisper_model,
+                device=transcribe_device,
+                cpu_threads=whisper_threads,
+                num_workers=concurrent_transcriptions,
+                use_aligner=use_forced_aligner,
+                aligner_path=forced_aligner_model if use_forced_aligner else None,
+            )
 
 def schedule_model_cleanup():
     """Schedule model cleanup with a delay to allow concurrent requests.
@@ -1310,7 +1497,7 @@ def perform_model_cleanup():
             logging.debug("Queue and direct tasks idle; clearing model from memory.")
             if model: 
                 try:
-                    model.model.unload_model()
+                    model.unload_model()
                     del model
                     model = None
                     logging.info("Model unloaded from memory")
@@ -1411,16 +1598,11 @@ def gen_subtitles(file_path: str, transcription_type: str, force_language: Langu
         if extracted_audio_file:
             data = extracted_audio_file
         
-        args = {}
-        display_name = os.path.basename(file_path)
-        args['progress_callback'] = ProgressHandler(display_name)
-            
-        if custom_regroup and custom_regroup.lower() != 'default':
-            args['regroup'] = custom_regroup
-            
-        args.update(kwargs)
-        
-        result = model.transcribe(data, language=force_language.to_iso_639_1(), task=transcription_type, verbose=None, **args)
+        result = model.transcribe(
+            data,
+            language=force_language.to_iso_639_1(),
+            task=transcription_type,
+        )
 
         appendLine(result)
 
@@ -1490,7 +1672,7 @@ def name_subtitle(file_path: str, language: LanguageCode) -> str:
         The name of the subtitle file to be written.
     """
     subgen_part = ".subgen" if show_in_subname_subgen else ""
-    model_part = f".{whisper_model}" if show_in_subname_model else ""
+    model_part = f".{model_display_name}" if show_in_subname_model else ""
     lang_part = define_subtitle_language_naming(language, subtitle_language_naming_type)
     
     return f"{os.path.splitext(file_path)[0]}{subgen_part}{model_part}.{lang_part}.srt"
@@ -2326,7 +2508,7 @@ def transcribe_existing(transcribe_folders, forceLanguage: LanguageCode = Langua
 
 if __name__ == "__main__":
     import uvicorn
-    logging.info(f"Subgen v{subgen_version}")
+    logging.info(f"Subgen (Qwen3-ASR) v{subgen_version}")
     logging.info(f"Threads: {str(whisper_threads)}, Concurrent transcriptions: {str(concurrent_transcriptions)}")
     logging.info(f"Transcribe device: {transcribe_device}, Model: {whisper_model}")
     os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
