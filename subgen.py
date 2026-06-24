@@ -413,7 +413,7 @@ class QwenASRResult:
         token-level timestamps reflect speech rhythm, and punctuation is
         often inferred by the ASR rather than spoken.
         """
-        MAX_GAP = 1.0  # seconds of silence to force a split
+        MAX_GAP = 0.6  # seconds between tokens to force a split
 
         segments = []
         current_text = ""
