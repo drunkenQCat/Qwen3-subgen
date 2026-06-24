@@ -69,13 +69,7 @@ def load_env_variables(env_filename='subgen.env'):
         print(f"{env_filename} file not found. Consider running with --setup-bazarr or creating it manually.")
 
 def main():
-    if 'python3' in sys.executable:
-        python_cmd = 'python3'
-    elif 'python' in sys.executable:
-        python_cmd = 'python'
-    else:
-        print("Script started with an unknown command")
-        sys.exit(1)
+    python_cmd = sys.executable
     if sys.version_info[0] < 3:
         print(f"This script requires Python 3 or higher, you are running {sys.version}")
         sys.exit(1)

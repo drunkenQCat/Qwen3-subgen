@@ -1,0 +1,20 @@
+[project]
+name = "qwen3-subgen"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "av>=17.1.0",
+    "fastapi>=0.138.0",
+    "ffmpeg-python>=0.2.0",
+    "numpy>=2.4.6",
+    "python-multipart>=0.0.32",
+    "qwen-asr>=0.0.6",
+    "requests>=2.34.2",
+    "soundfile>=0.14.0",
+    "torch>=2.12.1",
+    "torchaudio>=2.11.0",
+    "uvicorn>=0.49.0",
+    "watchdog>=6.0.0",
+]

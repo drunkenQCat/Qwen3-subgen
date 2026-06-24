@@ -1,4 +1,4 @@
-subgen_version = '2026.05.4'
+subgen_version = "2026.05.4"
 
 """
 ENVIRONMENT VARIABLES DOCUMENTATION
@@ -81,134 +81,235 @@ from watchdog.observers.polling import PollingObserver as Observer
 from language_code import LanguageCode
 
 import soundfile as sf
+
+# Monkey-patch: reduce max chunk size to avoid OOM on long audio
+import qwen_asr.inference.qwen3_asr as _qwen3_asr_mod
+_qwen3_asr_mod.MAX_ASR_INPUT_SECONDS = 60  # 60 seconds per chunk
+
 from qwen_asr import Qwen3ASRModel
 
 
 def convert_to_bool(in_bool):
     # Convert the input to string and lower case, then check against true values
-    return str(in_bool).lower() in ('true', 'on', '1', 'y', 'yes')
+    return str(in_bool).lower() in ("true", "on", "1", "y", "yes")
 
-def get_env_with_fallback(new_name: str, old_name: str, default_value=None, convert_func=None):
+
+def get_env_with_fallback(
+    new_name: str, old_name: str, default_value=None, convert_func=None
+):
     """
     Get environment variable with backwards compatibility fallback.
-    
+
     Args:
         new_name: The new standardized environment variable name
         old_name: The legacy environment variable name for backwards compatibility
         default_value: Default value if neither variable is set
         convert_func: Optional function to convert the value (e.g., convert_to_bool, int)
-    
+
     Returns:
         The environment variable value, converted if convert_func is provided
     """
     # Try new name first, then fall back to old name
     value = os.getenv(new_name) or os.getenv(old_name)
-    
+
     if value is None:
         value = default_value
-    
+
     # Apply conversion function if provided
     if convert_func and value is not None:
         return convert_func(value)
-    
+
     return value
-    
+
+
 # Server Integration - with backwards compatibility
-plextoken = get_env_with_fallback('PLEX_TOKEN', 'PLEXTOKEN', 'token here')
-plexserver = get_env_with_fallback('PLEX_SERVER', 'PLEXSERVER', 'http://192.168.1.111:32400')
-jellyfintoken = get_env_with_fallback('JELLYFIN_TOKEN', 'JELLYFINTOKEN', 'token here')
-jellyfinserver = get_env_with_fallback('JELLYFIN_SERVER', 'JELLYFINSERVER', 'http://192.168.1.111:8096')
+plextoken = get_env_with_fallback("PLEX_TOKEN", "PLEXTOKEN", "token here")
+plexserver = get_env_with_fallback(
+    "PLEX_SERVER", "PLEXSERVER", "http://192.168.1.111:32400"
+)
+jellyfintoken = get_env_with_fallback("JELLYFIN_TOKEN", "JELLYFINTOKEN", "token here")
+jellyfinserver = get_env_with_fallback(
+    "JELLYFIN_SERVER", "JELLYFINSERVER", "http://192.168.1.111:8096"
+)
 
 # Whisper Configuration - with backwards compatibility for Qwen3-ASR fork
-whisper_model = get_env_with_fallback('ASR_MODEL', 'WHISPER_MODEL', 'Qwen/Qwen3-ASR-0.6B')
-whisper_threads = int(get_env_with_fallback('ASR_THREADS', 'WHISPER_THREADS', 4))
-model_display_name = whisper_model.replace('/', '-')  # safe for filenames
-concurrent_transcriptions = int(os.getenv('CONCURRENT_TRANSCRIPTIONS', 2))
-transcribe_device = os.getenv('TRANSCRIBE_DEVICE', 'cpu')
-forced_aligner_model = os.getenv('FORCED_ALIGNER_MODEL', '')
-use_forced_aligner = convert_to_bool(os.getenv('USE_FORCED_ALIGNER', False))
+whisper_model = get_env_with_fallback(
+    "ASR_MODEL", "WHISPER_MODEL", "Qwen/Qwen3-ASR-0.6B"
+)
+whisper_threads = int(get_env_with_fallback("ASR_THREADS", "WHISPER_THREADS", 4))
+model_display_name = whisper_model.replace("/", "-")  # safe for filenames
+concurrent_transcriptions = int(os.getenv("CONCURRENT_TRANSCRIPTIONS", 2))
+transcribe_device = os.getenv("TRANSCRIBE_DEVICE", "cpu")
+forced_aligner_model = os.getenv("FORCED_ALIGNER_MODEL", "")
+use_forced_aligner = convert_to_bool(os.getenv("USE_FORCED_ALIGNER", False))
 
 # Processing Control - with backwards compatibility
-procaddedmedia = get_env_with_fallback('PROCESS_ADDED_MEDIA', 'PROCADDEDMEDIA', True, convert_to_bool)
-procmediaonplay = get_env_with_fallback('PROCESS_MEDIA_ON_PLAY', 'PROCMEDIAONPLAY', True, convert_to_bool)
+procaddedmedia = get_env_with_fallback(
+    "PROCESS_ADDED_MEDIA", "PROCADDEDMEDIA", True, convert_to_bool
+)
+procmediaonplay = get_env_with_fallback(
+    "PROCESS_MEDIA_ON_PLAY", "PROCMEDIAONPLAY", True, convert_to_bool
+)
 
 # Subtitle Configuration - with backwards compatibility
-subtitle_language_name = get_env_with_fallback('SUBTITLE_LANGUAGE_NAME', 'NAMESUBLANG', '')
+subtitle_language_name = get_env_with_fallback(
+    "SUBTITLE_LANGUAGE_NAME", "NAMESUBLANG", ""
+)
 
 # System Configuration - with backwards compatibility
-webhookport = get_env_with_fallback('WEBHOOK_PORT', 'WEBHOOKPORT', 9000, int)
-word_level_highlight = convert_to_bool(os.getenv('WORD_LEVEL_HIGHLIGHT', False))
-debug = convert_to_bool(os.getenv('DEBUG', True))
-use_path_mapping = convert_to_bool(os.getenv('USE_PATH_MAPPING', False))
-path_mapping_from = os.getenv('PATH_MAPPING_FROM', r'/tv')
-path_mapping_to = os.getenv('PATH_MAPPING_TO', r'/Volumes/TV')
-model_location = os.getenv('MODEL_PATH', './models')
-monitor = convert_to_bool(os.getenv('MONITOR', False))
-transcribe_folders = os.getenv('TRANSCRIBE_FOLDERS', '')
-transcribe_or_translate = os.getenv('TRANSCRIBE_OR_TRANSLATE', 'transcribe').lower()
-clear_vram_on_complete = convert_to_bool(os.getenv('CLEAR_VRAM_ON_COMPLETE', True))
-append = convert_to_bool(os.getenv('APPEND', False))
-reload_script_on_change = convert_to_bool(os.getenv('RELOAD_SCRIPT_ON_CHANGE', False))
-lrc_for_audio_files = convert_to_bool(os.getenv('LRC_FOR_AUDIO_FILES', True))
-custom_regroup = os.getenv('CUSTOM_REGROUP', 'cm_sl=84_sl=42++++++1')
-detect_language_length = int(os.getenv('DETECT_LANGUAGE_LENGTH', 30))
-detect_language_offset = int(os.getenv('DETECT_LANGUAGE_OFFSET', 0))
-model_cleanup_delay = int(os.getenv('MODEL_CLEANUP_DELAY', 30))
-asr_timeout = int(os.getenv('ASR_TIMEOUT', 18000))
-webhook_url_completed = os.getenv('WEBHOOK_URL_COMPLETED', '')
+webhookport = get_env_with_fallback("WEBHOOK_PORT", "WEBHOOKPORT", 9000, int)
+word_level_highlight = convert_to_bool(os.getenv("WORD_LEVEL_HIGHLIGHT", False))
+debug = convert_to_bool(os.getenv("DEBUG", True))
+use_path_mapping = convert_to_bool(os.getenv("USE_PATH_MAPPING", False))
+path_mapping_from = os.getenv("PATH_MAPPING_FROM", r"/tv")
+path_mapping_to = os.getenv("PATH_MAPPING_TO", r"/Volumes/TV")
+model_location = os.getenv("MODEL_PATH", "./models")
+monitor = convert_to_bool(os.getenv("MONITOR", False))
+transcribe_folders = os.getenv("TRANSCRIBE_FOLDERS", "")
+transcribe_or_translate = os.getenv("TRANSCRIBE_OR_TRANSLATE", "transcribe").lower()
+clear_vram_on_complete = convert_to_bool(os.getenv("CLEAR_VRAM_ON_COMPLETE", True))
+append = convert_to_bool(os.getenv("APPEND", False))
+reload_script_on_change = convert_to_bool(os.getenv("RELOAD_SCRIPT_ON_CHANGE", False))
+lrc_for_audio_files = convert_to_bool(os.getenv("LRC_FOR_AUDIO_FILES", True))
+custom_regroup = os.getenv("CUSTOM_REGROUP", "cm_sl=84_sl=42++++++1")
+detect_language_length = int(os.getenv("DETECT_LANGUAGE_LENGTH", 30))
+detect_language_offset = int(os.getenv("DETECT_LANGUAGE_OFFSET", 0))
+model_cleanup_delay = int(os.getenv("MODEL_CLEANUP_DELAY", 30))
+asr_timeout = int(os.getenv("ASR_TIMEOUT", 18000))
+webhook_url_completed = os.getenv("WEBHOOK_URL_COMPLETED", "")
 
 # Skip Configuration - with backwards compatibility
-skip_if_external_sub_exists = get_env_with_fallback('SKIP_IF_EXTERNAL_SUBTITLES_EXIST', 'SKIPIFEXTERNALSUB', False, convert_to_bool)
-skip_if_target_subtitle_exists = get_env_with_fallback('SKIP_IF_TARGET_SUBTITLES_EXIST', 'SKIP_IF_TO_TRANSCRIBE_SUB_ALREADY_EXIST', True, convert_to_bool)
-skip_if_internal_sub_language = LanguageCode.from_string(get_env_with_fallback('SKIP_IF_INTERNAL_SUBTITLES_LANGUAGE', 'SKIPIFINTERNALSUBLANG', ''))
-plex_queue_next_episode = convert_to_bool(os.getenv('PLEX_QUEUE_NEXT_EPISODE', False))
-plex_queue_season = convert_to_bool(os.getenv('PLEX_QUEUE_SEASON', False))
-plex_queue_series = convert_to_bool(os.getenv('PLEX_QUEUE_SERIES', False))
-# Language and Skip Configuration - with backwards compatibility
-skip_subtitle_languages = ([LanguageCode.from_string(code) for code in get_env_with_fallback('SKIP_SUBTITLE_LANGUAGES', 'SKIP_LANG_CODES', '').split("|")]
-        if get_env_with_fallback('SKIP_SUBTITLE_LANGUAGES', 'SKIP_LANG_CODES')
-    else[]
+skip_if_external_sub_exists = get_env_with_fallback(
+    "SKIP_IF_EXTERNAL_SUBTITLES_EXIST", "SKIPIFEXTERNALSUB", False, convert_to_bool
 )
-force_detected_language_to = LanguageCode.from_string(os.getenv('FORCE_DETECTED_LANGUAGE_TO', ''))
-preferred_audio_languages =[
-    LanguageCode.from_string(code) 
-    for code in os.getenv('PREFERRED_AUDIO_LANGUAGES', 'eng').split("|")
-] # in order of preference
-limit_to_preferred_audio_languages = convert_to_bool(os.getenv('LIMIT_TO_PREFERRED_AUDIO_LANGUAGE', False))
-skip_audio_languages = ([LanguageCode.from_string(code) for code in get_env_with_fallback('SKIP_IF_AUDIO_LANGUAGES', 'SKIP_IF_AUDIO_TRACK_IS', '').split("|")]
-    if get_env_with_fallback('SKIP_IF_AUDIO_LANGUAGES', 'SKIP_IF_AUDIO_TRACK_IS')
-    else[]
+skip_if_target_subtitle_exists = get_env_with_fallback(
+    "SKIP_IF_TARGET_SUBTITLES_EXIST",
+    "SKIP_IF_TO_TRANSCRIBE_SUB_ALREADY_EXIST",
+    True,
+    convert_to_bool,
+)
+skip_if_internal_sub_language = LanguageCode.from_string(
+    get_env_with_fallback(
+        "SKIP_IF_INTERNAL_SUBTITLES_LANGUAGE", "SKIPIFINTERNALSUBLANG", ""
+    )
+)
+plex_queue_next_episode = convert_to_bool(os.getenv("PLEX_QUEUE_NEXT_EPISODE", False))
+plex_queue_season = convert_to_bool(os.getenv("PLEX_QUEUE_SEASON", False))
+plex_queue_series = convert_to_bool(os.getenv("PLEX_QUEUE_SERIES", False))
+# Language and Skip Configuration - with backwards compatibility
+skip_subtitle_languages = (
+    [
+        LanguageCode.from_string(code)
+        for code in get_env_with_fallback(
+            "SKIP_SUBTITLE_LANGUAGES", "SKIP_LANG_CODES", ""
+        ).split("|")
+    ]
+    if get_env_with_fallback("SKIP_SUBTITLE_LANGUAGES", "SKIP_LANG_CODES")
+    else []
+)
+force_detected_language_to = LanguageCode.from_string(
+    os.getenv("FORCE_DETECTED_LANGUAGE_TO", "")
+)
+preferred_audio_languages = [
+    LanguageCode.from_string(code)
+    for code in os.getenv("PREFERRED_AUDIO_LANGUAGES", "eng").split("|")
+]  # in order of preference
+limit_to_preferred_audio_languages = convert_to_bool(
+    os.getenv("LIMIT_TO_PREFERRED_AUDIO_LANGUAGE", False)
+)
+skip_audio_languages = (
+    [
+        LanguageCode.from_string(code)
+        for code in get_env_with_fallback(
+            "SKIP_IF_AUDIO_LANGUAGES", "SKIP_IF_AUDIO_TRACK_IS", ""
+        ).split("|")
+    ]
+    if get_env_with_fallback("SKIP_IF_AUDIO_LANGUAGES", "SKIP_IF_AUDIO_TRACK_IS")
+    else []
 )
 
 # Additional Subtitle Configuration - with backwards compatibility
-subtitle_language_naming_type = os.getenv('SUBTITLE_LANGUAGE_NAMING_TYPE', 'ISO_639_2_B')
-only_match_subgen_subtitles = get_env_with_fallback('SKIP_ONLY_SUBGEN_SUBTITLES', 'ONLY_SKIP_IF_SUBGEN_SUBTITLE', False, convert_to_bool)
-skip_unknown_language = convert_to_bool(os.getenv('SKIP_UNKNOWN_LANGUAGE', False))
-skip_if_no_audio_language_but_subtitles_exist = get_env_with_fallback('SKIP_IF_NO_LANGUAGE_BUT_SUBTITLES_EXIST', 'SKIP_IF_LANGUAGE_IS_NOT_SET_BUT_SUBTITLES_EXIST', False, convert_to_bool)
-should_whisper_detect_audio_language = convert_to_bool(os.getenv('SHOULD_WHISPER_DETECT_AUDIO_LANGUAGE', False))
-show_in_subname_subgen = convert_to_bool(os.getenv('SHOW_IN_SUBNAME_SUBGEN', True))
-show_in_subname_model = convert_to_bool(os.getenv('SHOW_IN_SUBNAME_MODEL', True))
+subtitle_language_naming_type = os.getenv(
+    "SUBTITLE_LANGUAGE_NAMING_TYPE", "ISO_639_2_B"
+)
+only_match_subgen_subtitles = get_env_with_fallback(
+    "SKIP_ONLY_SUBGEN_SUBTITLES", "ONLY_SKIP_IF_SUBGEN_SUBTITLE", False, convert_to_bool
+)
+skip_unknown_language = convert_to_bool(os.getenv("SKIP_UNKNOWN_LANGUAGE", False))
+skip_if_no_audio_language_but_subtitles_exist = get_env_with_fallback(
+    "SKIP_IF_NO_LANGUAGE_BUT_SUBTITLES_EXIST",
+    "SKIP_IF_LANGUAGE_IS_NOT_SET_BUT_SUBTITLES_EXIST",
+    False,
+    convert_to_bool,
+)
+should_whisper_detect_audio_language = convert_to_bool(
+    os.getenv("SHOULD_WHISPER_DETECT_AUDIO_LANGUAGE", False)
+)
+show_in_subname_subgen = convert_to_bool(os.getenv("SHOW_IN_SUBNAME_SUBGEN", True))
+show_in_subname_model = convert_to_bool(os.getenv("SHOW_IN_SUBNAME_MODEL", True))
 
 # Advanced Configuration
 try:
-    kwargs = ast.literal_eval(os.getenv('SUBGEN_KWARGS', '{}') or '{}')
+    kwargs = ast.literal_eval(os.getenv("SUBGEN_KWARGS", "{}") or "{}")
 except ValueError:
     kwargs = {}
-    logging.info("kwargs (SUBGEN_KWARGS) is an invalid dictionary, defaulting to empty '{}'")
-    
+    logging.info(
+        "kwargs (SUBGEN_KWARGS) is an invalid dictionary, defaulting to empty '{}'"
+    )
+
 if transcribe_device == "gpu":
     transcribe_device = "cuda"
 
 VIDEO_EXTENSIONS = (
-    ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".mpg", ".mpeg", 
-    ".3gp", ".ogv", ".vob", ".rm", ".rmvb", ".ts", ".m4v", ".f4v", ".svq3", 
-    ".asf", ".m2ts", ".divx", ".xvid"
+    ".mp4",
+    ".mkv",
+    ".avi",
+    ".mov",
+    ".wmv",
+    ".flv",
+    ".webm",
+    ".mpg",
+    ".mpeg",
+    ".3gp",
+    ".ogv",
+    ".vob",
+    ".rm",
+    ".rmvb",
+    ".ts",
+    ".m4v",
+    ".f4v",
+    ".svq3",
+    ".asf",
+    ".m2ts",
+    ".divx",
+    ".xvid",
 )
 
 AUDIO_EXTENSIONS = (
-    ".mp3", ".wav", ".aac", ".flac", ".ogg", ".wma", ".alac", ".m4a", ".opus", 
-    ".aiff", ".aif", ".pcm", ".ra", ".ram", ".mid", ".midi", ".ape", ".wv", 
-    ".amr", ".vox", ".tak", ".spx", ".m4b", ".mka"
+    ".mp3",
+    ".wav",
+    ".aac",
+    ".flac",
+    ".ogg",
+    ".wma",
+    ".alac",
+    ".m4a",
+    ".opus",
+    ".aiff",
+    ".aif",
+    ".pcm",
+    ".ra",
+    ".ram",
+    ".mid",
+    ".midi",
+    ".ape",
+    ".wv",
+    ".amr",
+    ".vox",
+    ".tak",
+    ".spx",
+    ".m4b",
+    ".mka",
 )
 
 # ============================================================================
@@ -216,16 +317,36 @@ AUDIO_EXTENSIONS = (
 # ============================================================================
 
 QWEN_LANG_TO_ISO = {
-    "Chinese": "zh", "English": "en", "Cantonese": "yue",
-    "Arabic": "ar", "German": "de", "French": "fr",
-    "Spanish": "es", "Portuguese": "pt", "Indonesian": "id",
-    "Italian": "it", "Korean": "ko", "Russian": "ru",
-    "Thai": "th", "Vietnamese": "vi", "Japanese": "ja",
-    "Turkish": "tr", "Hindi": "hi", "Malay": "ms",
-    "Dutch": "nl", "Swedish": "sv", "Danish": "da",
-    "Finnish": "fi", "Polish": "pl", "Czech": "cs",
-    "Filipino": "fil", "Persian": "fa", "Greek": "el",
-    "Hungarian": "hu", "Macedonian": "mk", "Romanian": "ro",
+    "Chinese": "zh",
+    "English": "en",
+    "Cantonese": "yue",
+    "Arabic": "ar",
+    "German": "de",
+    "French": "fr",
+    "Spanish": "es",
+    "Portuguese": "pt",
+    "Indonesian": "id",
+    "Italian": "it",
+    "Korean": "ko",
+    "Russian": "ru",
+    "Thai": "th",
+    "Vietnamese": "vi",
+    "Japanese": "ja",
+    "Turkish": "tr",
+    "Hindi": "hi",
+    "Malay": "ms",
+    "Dutch": "nl",
+    "Swedish": "sv",
+    "Danish": "da",
+    "Finnish": "fi",
+    "Polish": "pl",
+    "Czech": "cs",
+    "Filipino": "fil",
+    "Persian": "fa",
+    "Greek": "el",
+    "Hungarian": "hu",
+    "Macedonian": "mk",
+    "Romanian": "ro",
 }
 
 ISO_TO_QWEN_LANG = {v: k for k, v in QWEN_LANG_TO_ISO.items()}
@@ -233,6 +354,7 @@ ISO_TO_QWEN_LANG = {v: k for k, v in QWEN_LANG_TO_ISO.items()}
 
 class QwenASRSegment:
     """Adapter for Qwen3-ASR timestamp objects, mimics stable_whisper.Segment."""
+
     def __init__(self, text, start, end, seg_id=0):
         self.text = text
         self._start = start
@@ -270,39 +392,68 @@ class QwenASRSegment:
 class QwenASRResult:
     """Wraps a Qwen3-ASR transcription result, mimics stable_whisper result."""
 
+    # Sentence-ending punctuation for CJK and Latin scripts
+    _SENTENCE_ENDS = set("。！？\n.?!;；")
+
     def __init__(self, qwen_result):
         lang_name = qwen_result.language or "English"
         self.language = QWEN_LANG_TO_ISO.get(lang_name, lang_name[:2].lower())
 
         if qwen_result.time_stamps and len(qwen_result.time_stamps) > 0:
-            self.segments = [
-                QwenASRSegment(ts.text, ts.start_time, ts.end_time, i)
-                for i, ts in enumerate(qwen_result.time_stamps)
-            ]
-            # Merge adjacent segments with the same text (Qwen3 sometimes splits sentences)
-            self._merge_adjacent()
+            self.segments = self._build_sentence_segments(qwen_result)
         else:
-            self.segments = [
-                QwenASRSegment(qwen_result.text, 0.0, 0.01, 0)
-            ]
+            self.segments = [QwenASRSegment(qwen_result.text, 0.0, 0.01, 0)]
 
-    def _merge_adjacent(self):
-        if len(self.segments) <= 1:
-            return
-        merged = [self.segments[0]]
-        for seg in self.segments[1:]:
-            prev = merged[-1]
-            if seg.text.strip() == prev.text.strip():
-                prev._end = seg.end
-                prev._default_end = seg.end
+    def _build_sentence_segments(self, qwen_result):
+        """Merge token-level timestamps into sentence-level segments.
+        
+        Tokens are grouped until a sentence-ending punctuation is encountered
+        or a significant time gap (> 0.5s) is detected.
+        """
+        MAX_GAP = 0.5  # seconds between tokens to force a split
+
+        segments = []
+        current_text = ""
+        seg_start = None
+        seg_end = 0.0
+
+        for ts in qwen_result.time_stamps:
+            text = ts.text or ""
+            if not text.strip():
+                continue
+
+            if seg_start is None:
+                seg_start = ts.start_time
+                current_text = text
+                seg_end = ts.end_time
+            elif ts.start_time - seg_end > MAX_GAP:
+                # Time gap too large, flush current segment
+                if current_text.strip():
+                    segments.append(QwenASRSegment(current_text, seg_start, seg_end, len(segments)))
+                seg_start = ts.start_time
+                current_text = text
+                seg_end = ts.end_time
             else:
-                merged.append(seg)
-        self.segments = merged
+                current_text += text
+                seg_end = ts.end_time
+
+            # Check if we should split on sentence-ending punctuation
+            if text and text[-1] in self._SENTENCE_ENDS:
+                if current_text.strip():
+                    segments.append(QwenASRSegment(current_text, seg_start, seg_end, len(segments)))
+                seg_start = None
+                current_text = ""
+
+        # Flush remaining
+        if current_text.strip():
+            segments.append(QwenASRSegment(current_text, seg_start, seg_end, len(segments)))
+
+        return segments if segments else [QwenASRSegment(qwen_result.text, 0.0, 0.01, 0)]
 
     def to_srt_vtt(self, filepath=None, word_level=False):
         srt = self._to_srt()
         if filepath:
-            with open(filepath, 'w', encoding='utf-8') as f:
+            with open(filepath, "w", encoding="utf-8") as f:
                 f.write(srt)
             return None
         return srt
@@ -311,7 +462,9 @@ class QwenASRResult:
         lines = []
         for i, seg in enumerate(self.segments, 1):
             lines.append(str(i))
-            lines.append(f"{self._fmt_srt_ts(seg.start)} --> {self._fmt_srt_ts(seg.end)}")
+            lines.append(
+                f"{self._fmt_srt_ts(seg.start)} --> {self._fmt_srt_ts(seg.end)}"
+            )
             lines.append(seg.text.strip())
             lines.append("")
         return "\n".join(lines)
@@ -328,9 +481,17 @@ class QwenASRResult:
 class QwenASRModelWrapper:
     """Wraps Qwen3ASRModel to provide stable-whisper-compatible interface."""
 
-    def __init__(self, model_path, device="cpu", cpu_threads=4,
-                 num_workers=1, download_root=None, compute_type="auto",
-                 use_aligner=False, aligner_path=None):
+    def __init__(
+        self,
+        model_path,
+        device="cpu",
+        cpu_threads=4,
+        num_workers=1,
+        download_root=None,
+        compute_type="auto",
+        use_aligner=False,
+        aligner_path=None,
+    ):
         self.device = device
         self.model_path = model_path
         self._model = None
@@ -341,7 +502,7 @@ class QwenASRModelWrapper:
         }
 
         if device == "cuda":
-            model_kwargs["device_map"] = "cuda:0"
+            model_kwargs["device_map"] = "cuda"
             model_kwargs["dtype"] = torch.bfloat16
         else:
             model_kwargs["device_map"] = "cpu"
@@ -358,8 +519,15 @@ class QwenASRModelWrapper:
         self._model = Qwen3ASRModel.from_pretrained(model_path, **model_kwargs)
         logging.info(f"Qwen3-ASR model loaded: {model_path} on {device}")
 
-    def transcribe(self, audio, language=None, task="transcribe",
-                   verbose=None, progress_callback=None, **kwargs):
+    def transcribe(
+        self,
+        audio,
+        language=None,
+        task="transcribe",
+        verbose=None,
+        progress_callback=None,
+        **kwargs,
+    ):
         return_time_stamps = self._use_aligner
 
         # Handle various audio input formats
@@ -375,7 +543,9 @@ class QwenASRModelWrapper:
 
         # Translate task not supported by Qwen3-ASR; fall back to transcribe
         if task == "translate":
-            logging.warning("Qwen3-ASR does not support translation. Falling back to transcribe.")
+            logging.warning(
+                "Qwen3-ASR does not support translation. Falling back to transcribe."
+            )
             task = "transcribe"
 
         results = self._model.transcribe(
@@ -405,13 +575,18 @@ def _decode_wav_bytes(audio_bytes):
         wav, sr = sf.read(f, dtype="float32", always_2d=False)
     return (np.asarray(wav, dtype=np.float32), int(sr))
 
+
 # ============================================================================
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if transcribe_folders:
-        threading.Thread(target=transcribe_existing, args=(transcribe_folders,), daemon=True).start()
+        threading.Thread(
+            target=transcribe_existing, args=(transcribe_folders,), daemon=True
+        ).start()
     yield
+
 
 app = FastAPI(lifespan=lifespan)
 
@@ -424,31 +599,34 @@ model_load_lock = Lock()
 active_direct_tasks = 0
 active_direct_tasks_lock = Lock()
 
-in_docker = os.path.exists('/.dockerenv')
+in_docker = os.path.exists("/.dockerenv")
 docker_status = "Docker" if in_docker else "Standalone"
 
 # ============================================================================
 # TASK RESULT STORAGE (for blocking endpoints)
 # ============================================================================
 
+
 class TaskResult:
     """Stores the result of a queued task for blocking retrieval"""
+
     def __init__(self):
         self.result = None
         self.error = None
         self.done = Event()
-    
+
     def set_result(self, result):
         self.result = result
         self.done.set()
-    
+
     def set_error(self, error):
         self.error = error
         self.done.set()
-    
+
     def wait(self, timeout=None):
         """Block until result is ready. Returns True if completed, False if timeout."""
         return self.done.wait(timeout)
+
 
 # Dictionary to store task results keyed by task_id
 # Entries are cleaned up in /asr endpoint finally block to prevent unbounded growth
@@ -459,42 +637,48 @@ task_results_lock = Lock()
 # HASH GENERATION FOR DEDUPLICATION
 # ============================================================================
 
-def generate_audio_hash(audio_content: bytes, task: str = None, language: str = None) -> str:
+
+def generate_audio_hash(
+    audio_content: bytes, task: str = None, language: str = None
+) -> str:
     """
-    Generate a deterministic hash from audio content and optional parameters. 
-    
-    Same audio + same task + same language = always same hash. 
-    This ensures duplicate requests are caught by the queue. 
-    
+    Generate a deterministic hash from audio content and optional parameters.
+
+    Same audio + same task + same language = always same hash.
+    This ensures duplicate requests are caught by the queue.
+
     Args:
         audio_content: Raw audio bytes from uploaded file
         task: Optional task type ('transcribe' or 'translate')
         language: Optional target language code
-        
-    Returns: 
+
+    Returns:
         SHA256 hash (first 16 chars for brevity in logs)
     """
     hash_input = audio_content
-    
+
     # Include task and language for fine-grained deduplication
     if task:
-        hash_input += task.encode('utf-8')
+        hash_input += task.encode("utf-8")
     if language:
-        hash_input += language.encode('utf-8')
-    
+        hash_input += language.encode("utf-8")
+
     full_hash = hashlib.sha256(hash_input).hexdigest()
-    return full_hash[:16] # Use first 16 chars for shorter IDs in logs
+    return full_hash[:16]  # Use first 16 chars for shorter IDs in logs
+
 
 # ============================================================================
 # REFACTORED DEDUPLICATED QUEUE WITH BETTER TRACKING
 # ============================================================================
 
+
 class DeduplicatedQueue(queue.PriorityQueue):
     """Queue that prevents duplicates, handles priority, and tracks status."""
+
     def __init__(self):
         super().__init__()
-        self._queued = set()     # Tracks task IDs waiting in queue
-        self._processing = set() # Tracks task IDs currently being handled
+        self._queued = set()  # Tracks task IDs waiting in queue
+        self._processing = set()  # Tracks task IDs currently being handled
         self._lock = Lock()
 
     def put(self, item, block=True, timeout=None):
@@ -503,8 +687,12 @@ class DeduplicatedQueue(queue.PriorityQueue):
             if task_id not in self._queued and task_id not in self._processing:
                 # Priority: 0 (Detect), 1 (ASR), 2 (Transcribe)
                 task_type = item.get("type", "transcribe")
-                priority = 0 if task_type == "detect_language" else (1 if task_type == "asr" else 2)
-                
+                priority = (
+                    0
+                    if task_type == "detect_language"
+                    else (1 if task_type == "asr" else 2)
+                )
+
                 # PriorityQueue requires a tuple: (priority, tie_breaker, item)
                 super().put((priority, time.time(), item), block, timeout)
                 self._queued.add(task_id)
@@ -542,12 +730,14 @@ class DeduplicatedQueue(queue.PriorityQueue):
         with self._lock:
             return list(self._processing)
 
+
 # Start queue
 task_queue = DeduplicatedQueue()
 
 # ============================================================================
 # TRANSCRIPTION WORKER
 # ============================================================================
+
 
 def transcription_worker():
     """Main worker thread with centralized logging and status tracking."""
@@ -558,46 +748,73 @@ def transcription_worker():
             task = task_queue.get(block=True, timeout=1)
             task_type = task.get("type", "transcribe")
             path = task.get("path", "unknown")
-            display_name = os.path.basename(path) if ("/" in str(path) or "\\" in str(path)) else path
-            
+            display_name = (
+                os.path.basename(path)
+                if ("/" in str(path) or "\\" in str(path))
+                else path
+            )
+
             # Status for START log
             proc_count = len(task_queue.get_processing_tasks())
             queue_count = len(task_queue.get_queued_tasks())
-            logging.info(f"WORKER START :[{task_type.upper():<10}] {display_name:^40} | Jobs: {proc_count} processing, {queue_count} queued")
-            
+            logging.info(
+                f"WORKER START :[{task_type.upper():<10}] {display_name:^40} | Jobs: {proc_count} processing, {queue_count} queued"
+            )
+
             start_time = time.time()
-            if task_type == "detect_language": 
-                if "audio_content" in task: 
+            if task_type == "detect_language":
+                if "audio_content" in task:
                     detect_language_from_upload(task)
-                else: 
+                else:
                     # Capture the transcription task to queue later
-                    next_task = detect_language_task(task['path'], original_task_data=task)
+                    next_task = detect_language_task(
+                        task["path"], original_task_data=task
+                    )
             elif task_type == "asr":
                 asr_task_worker(task)
-            else: # transcribe
-                gen_subtitles(task['path'], task['transcribe_or_translate'], task['force_language'], audio_tracks=task.get('audio_tracks'))
-                
+            else:  # transcribe
+                gen_subtitles(
+                    task["path"],
+                    task["transcribe_or_translate"],
+                    task["force_language"],
+                    audio_tracks=task.get("audio_tracks"),
+                )
+
                 # --- METADATA REFRESH LOGIC ---
-                if 'plex_item_id' in task:
+                if "plex_item_id" in task:
                     try:
-                        logging.info(f"Refreshing Plex Metadata for item {task['plex_item_id']}")
-                        refresh_plex_metadata(task['plex_item_id'], task['plex_server'], task['plex_token'])
+                        logging.info(
+                            f"Refreshing Plex Metadata for item {task['plex_item_id']}"
+                        )
+                        refresh_plex_metadata(
+                            task["plex_item_id"],
+                            task["plex_server"],
+                            task["plex_token"],
+                        )
                     except Exception as e:
                         logging.error(f"Failed to refresh Plex metadata: {e}")
-                
-                if 'jellyfin_item_id' in task:
+
+                if "jellyfin_item_id" in task:
                     try:
-                        logging.info(f"Refreshing Jellyfin Metadata for item {task['jellyfin_item_id']}")
-                        refresh_jellyfin_metadata(task['jellyfin_item_id'], task['jellyfin_server'], task['jellyfin_token'])
+                        logging.info(
+                            f"Refreshing Jellyfin Metadata for item {task['jellyfin_item_id']}"
+                        )
+                        refresh_jellyfin_metadata(
+                            task["jellyfin_item_id"],
+                            task["jellyfin_server"],
+                            task["jellyfin_token"],
+                        )
                     except Exception as e:
                         logging.error(f"Failed to refresh Jellyfin metadata: {e}")
                 # ------------------------------
-            
+
             # Status for FINISH log
             elapsed = time.time() - start_time
             m, s = divmod(int(elapsed), 60)
             remaining_queued = len(task_queue.get_queued_tasks())
-            logging.info(f"WORKER FINISH: [{task_type.upper():<10}] {display_name:^40} in {m}m {s}s | Remaining: {remaining_queued} queued")
+            logging.info(
+                f"WORKER FINISH: [{task_type.upper():<10}] {display_name:^40} in {m}m {s}s | Remaining: {remaining_queued} queued"
+            )
 
         except queue.Empty:
             continue
@@ -607,25 +824,31 @@ def transcription_worker():
             if task:
                 task_queue.task_done()
                 task_queue.mark_done(task)
-                
+
                 # Now that the detect task is removed from processing, it's safe to queue the transcription
                 if next_task:
                     if task_queue.put(next_task):
-                        logging.debug(f"Queued transcription for detected language: {next_task['path']}")
+                        logging.debug(
+                            f"Queued transcription for detected language: {next_task['path']}"
+                        )
                     else:
-                        logging.debug(f"Transcription already queued/processing for: {next_task['path']}")
-                        
+                        logging.debug(
+                            f"Transcription already queued/processing for: {next_task['path']}"
+                        )
+
                 delete_model()
+
 
 # Create worker threads
 for _ in range(concurrent_transcriptions):
     threading.Thread(target=transcription_worker, daemon=True).start()
 
+
 # Define a filter class to hide common logging we don't want to see
 class MultiplePatternsFilter(logging.Filter):
     def filter(self, record):
         # Define the patterns to search for
-        patterns =[
+        patterns = [
             "header parsing failed",
             "timescale not set",
             "srt was added",
@@ -633,10 +856,11 @@ class MultiplePatternsFilter(logging.Filter):
             "Calling on_",
             "tokenizer",
             "special_tokens",
-            "Using a slow"
+            "Using a slow",
         ]
         # Return False if any of the patterns are found, True otherwise
         return not any(pattern in record.getMessage() for pattern in patterns)
+
 
 # Configure logging
 if debug:
@@ -645,15 +869,15 @@ else:
     level = logging.INFO
 
 logging.basicConfig(
-    stream=sys.stderr, 
-    level=level, 
+    stream=sys.stderr,
+    level=level,
     format="%(asctime)s %(levelname)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S" # This removes the ,123 part
+    datefmt="%Y-%m-%d %H:%M:%S",  # This removes the ,123 part
 )
 
 # Get the root logger
 logger = logging.getLogger()
-logger.setLevel(level) # Set the logger level
+logger.setLevel(level)  # Set the logger level
 
 for handler in logger.handlers:
     handler.addFilter(MultiplePatternsFilter())
@@ -684,9 +908,12 @@ class ProgressHandler:
         return f"{m:02d}:{s:02d}"
 
     def __call__(self, seek, total):
-        if docker_status == 'Docker' or debug:
+        if docker_status == "Docker" or debug:
             current_time = time.time()
-            if self.last_print_time == 0 or (current_time - self.last_print_time) >= self.interval:
+            if (
+                self.last_print_time == 0
+                or (current_time - self.last_print_time) >= self.interval
+            ):
                 self.last_print_time = current_time
 
                 pct = int((seek / total) * 100) if total > 0 else 0
@@ -697,7 +924,11 @@ class ProgressHandler:
                 proc = len(task_queue.get_processing_tasks())
                 queued = len(task_queue.get_queued_tasks())
 
-                clean_name = (self.filename[:37] + '..') if len(self.filename) > 40 else self.filename
+                clean_name = (
+                    (self.filename[:37] + "..")
+                    if len(self.filename) > 40
+                    else self.filename
+                )
 
                 logging.info(
                     f"[ {clean_name:<40}] {pct:>3}% | "
@@ -705,26 +936,31 @@ class ProgressHandler:
                     f"[{self._fmt_t(elapsed):>5}<{self._fmt_t(eta):>5}, {speed:>5.2f}s/s] | "
                     f"Jobs: {proc} processing, {queued} queued"
                 )
-                
+
+
 TIME_OFFSET = 5
+
 
 def appendLine(result):
     if append:
         lastSegment = result.segments[-1]
         date_time_str = datetime.now().strftime("%d %b %Y - %H:%M:%S")
-        appended_text = f"Transcribed by Qwen3-ASR ({model_display_name}) on {date_time_str}"
-        
+        appended_text = (
+            f"Transcribed by Qwen3-ASR ({model_display_name}) on {date_time_str}"
+        )
+
         # Create a new segment with the updated information
         newSegment = QwenASRSegment(
             start=lastSegment.start + TIME_OFFSET,
             end=lastSegment.end + TIME_OFFSET,
             text=appended_text,
-            words=[], # Empty list for words
-            id=lastSegment.id + 1
+            words=[],  # Empty list for words
+            id=lastSegment.id + 1,
         )
-        
+
         # Append the new segment to the result's segments
         result.segments.append(newSegment)
+
 
 @app.get("/plex")
 @app.get("/webhook")
@@ -734,104 +970,133 @@ def appendLine(result):
 @app.get("/detect-language")
 @app.get("/tautulli")
 def handle_get_request(request: Request):
-    return {"You accessed this request incorrectly via a GET request. See https://github.com/McCloudS/subgen for proper configuration"}
+    return {
+        "You accessed this request incorrectly via a GET request. See https://github.com/McCloudS/subgen for proper configuration"
+    }
+
 
 @app.get("/")
 def webui():
-    return {"The webui for configuration was removed on 1 October 2024, please configure via environment variables or in your Docker settings. "}
+    return {
+        "The webui for configuration was removed on 1 October 2024, please configure via environment variables or in your Docker settings. "
+    }
+
 
 @app.get("/status")
 def status():
     return {"version": f"Subgen (Qwen3-ASR) {subgen_version} ({docker_status})"}
 
+
 @app.post("/tautulli")
 def receive_tautulli_webhook(
-        source: Union[str, None] = Header(None),
-        event: str = Body(None),
-        file: str = Body(None),
+    source: Union[str, None] = Header(None),
+    event: str = Body(None),
+    file: str = Body(None),
 ):
     if source == "Tautulli":
         logging.debug(f"Tautulli event detected is: {event}")
-        if((event == "added" and procaddedmedia) or (event == "played" and procmediaonplay)):
+        if (event == "added" and procaddedmedia) or (
+            event == "played" and procmediaonplay
+        ):
             fullpath = file
             logging.debug(f"Full file path: {fullpath}")
 
             gen_subtitles_queue(path_mapping(fullpath), transcribe_or_translate)
     else:
         return {
-            "message": "This doesn't appear to be a properly configured Tautulli webhook, please review the instructions again!"}
+            "message": "This doesn't appear to be a properly configured Tautulli webhook, please review the instructions again!"
+        }
 
     return ""
 
+
 @app.post("/plex")
 def receive_plex_webhook(
-        user_agent: Union[str] = Header(None),
-        payload: Union[str] = Form(),
+    user_agent: Union[str] = Header(None),
+    payload: Union[str] = Form(),
 ):
     try:
         plex_json = json.loads(payload)
         if "PlexMediaServer" not in user_agent:
-            return {"message": "This doesn't appear to be a properly configured Plex webhook, please review the instructions again"}
+            return {
+                "message": "This doesn't appear to be a properly configured Plex webhook, please review the instructions again"
+            }
 
         event = plex_json["event"]
         logging.debug(f"Plex event detected is: {event}")
 
-        if (event == "library.new" and procaddedmedia) or (event == "media.play" and procmediaonplay):
-            rating_key = plex_json['Metadata']['ratingKey']
+        if (event == "library.new" and procaddedmedia) or (
+            event == "media.play" and procmediaonplay
+        ):
+            rating_key = plex_json["Metadata"]["ratingKey"]
             fullpath = get_plex_file_name(rating_key, plexserver, plextoken)
             logging.debug(f"Full file path: {fullpath}")
 
             # Queue the current item with its specific ID for refreshing
             gen_subtitles_queue(
-                path_mapping(fullpath), 
-                transcribe_or_translate, 
-                plex_item_id=rating_key, 
-                plex_server=plexserver, 
-                plex_token=plextoken
+                path_mapping(fullpath),
+                transcribe_or_translate,
+                plex_item_id=rating_key,
+                plex_server=plexserver,
+                plex_token=plextoken,
             )
-            
+
             # Note: refresh_plex_metadata is removed here; it is now handled by the worker thread.
 
             if plex_queue_next_episode:
-                next_key = get_next_plex_episode(plex_json['Metadata']['ratingKey'], stay_in_season=False)
+                next_key = get_next_plex_episode(
+                    plex_json["Metadata"]["ratingKey"], stay_in_season=False
+                )
                 if next_key:
                     next_file = get_plex_file_name(next_key, plexserver, plextoken)
                     gen_subtitles_queue(
-                        path_mapping(next_file), 
+                        path_mapping(next_file),
                         transcribe_or_translate,
-                        plex_item_id=next_key, # Pass the NEXT ID so it refreshes when done
+                        plex_item_id=next_key,  # Pass the NEXT ID so it refreshes when done
                         plex_server=plexserver,
-                        plex_token=plextoken
+                        plex_token=plextoken,
                     )
 
             if plex_queue_series or plex_queue_season:
-                current_rating_key = plex_json['Metadata']['ratingKey']
-                stay_in_season = plex_queue_season # Determine if we're staying in the season or not
+                current_rating_key = plex_json["Metadata"]["ratingKey"]
+                stay_in_season = (
+                    plex_queue_season  # Determine if we're staying in the season or not
+                )
 
                 while current_rating_key is not None:
                     try:
                         # Queue the current episode
-                        file_path = path_mapping(get_plex_file_name(current_rating_key, plexserver, plextoken))
-                        
-                        gen_subtitles_queue(
-                            file_path, 
-                            transcribe_or_translate,
-                            plex_item_id=current_rating_key, # Pass the specific loop ID for refreshing
-                            plex_server=plexserver,
-                            plex_token=plextoken
+                        file_path = path_mapping(
+                            get_plex_file_name(
+                                current_rating_key, plexserver, plextoken
+                            )
                         )
-                        
-                        logging.debug(f"Queued episode with ratingKey {current_rating_key}")
+
+                        gen_subtitles_queue(
+                            file_path,
+                            transcribe_or_translate,
+                            plex_item_id=current_rating_key,  # Pass the specific loop ID for refreshing
+                            plex_server=plexserver,
+                            plex_token=plextoken,
+                        )
+
+                        logging.debug(
+                            f"Queued episode with ratingKey {current_rating_key}"
+                        )
 
                         # Get the next episode
-                        next_episode_rating_key = get_next_plex_episode(current_rating_key, stay_in_season=stay_in_season)
+                        next_episode_rating_key = get_next_plex_episode(
+                            current_rating_key, stay_in_season=stay_in_season
+                        )
                         if next_episode_rating_key is None:
-                            break # Exit the loop if no next episode
+                            break  # Exit the loop if no next episode
                         current_rating_key = next_episode_rating_key
 
                     except Exception as e:
-                        logging.error(f"Error processing episode with ratingKey {current_rating_key} or reached end of series: {e}")
-                        break # Stop processing on error
+                        logging.error(
+                            f"Error processing episode with ratingKey {current_rating_key} or reached end of series: {e}"
+                        )
+                        break  # Stop processing on error
 
                 logging.info("All episodes in the series (or season) have been queued.")
 
@@ -839,48 +1104,53 @@ def receive_plex_webhook(
         logging.error(f"Failed to process Plex webhook: {e}")
 
     return ""
- 
+
+
 @app.post("/jellyfin")
 def receive_jellyfin_webhook(
-        user_agent: str = Header(None),
-        NotificationType: str = Body(None),
-        file: str = Body(None),
-        ItemId: str = Body(None),
+    user_agent: str = Header(None),
+    NotificationType: str = Body(None),
+    file: str = Body(None),
+    ItemId: str = Body(None),
 ):
     if "Jellyfin-Server" in user_agent:
         logging.debug(f"Jellyfin event detected is: {NotificationType}")
         logging.debug(f"itemid is: {ItemId}")
 
-        if (NotificationType == "ItemAdded" and procaddedmedia) or (NotificationType == "PlaybackStart" and procmediaonplay):
+        if (NotificationType == "ItemAdded" and procaddedmedia) or (
+            NotificationType == "PlaybackStart" and procmediaonplay
+        ):
             fullpath = get_jellyfin_file_name(ItemId, jellyfinserver, jellyfintoken)
             logging.debug(f"Full file path: {fullpath}")
 
             # Queue item with Jellyfin metadata ID for delayed refresh
             gen_subtitles_queue(
-                path_mapping(fullpath), 
+                path_mapping(fullpath),
                 transcribe_or_translate,
                 jellyfin_item_id=ItemId,
                 jellyfin_server=jellyfinserver,
-                jellyfin_token=jellyfintoken
+                jellyfin_token=jellyfintoken,
             )
-            
+
             # Note: refresh_jellyfin_metadata removed here; handled by worker.
     else:
         return {
-            "message": "This doesn't appear to be a properly configured Jellyfin webhook, please review the instructions again!"}
+            "message": "This doesn't appear to be a properly configured Jellyfin webhook, please review the instructions again!"
+        }
 
     return ""
 
+
 @app.post("/emby")
 def receive_emby_webhook(
-        user_agent: Union[str, None] = Header(None),
-        data: Union[str, None] = Form(None),
+    user_agent: Union[str, None] = Header(None),
+    data: Union[str, None] = Form(None),
 ):
     if not data:
         return ""
 
     data_dict = json.loads(data)
-    event = data_dict['Event']
+    event = data_dict["Event"]
     logging.debug("Emby event detected is: " + event)
 
     # Check if it's a notification test event
@@ -888,105 +1158,114 @@ def receive_emby_webhook(
         logging.info("Emby test message received!")
         return {"message": "Notification test received successfully!"}
 
-    if (event == "library.new" and procaddedmedia) or (event == "playback.start" and procmediaonplay):
-        fullpath = data_dict['Item']['Path']
+    if (event == "library.new" and procaddedmedia) or (
+        event == "playback.start" and procmediaonplay
+    ):
+        fullpath = data_dict["Item"]["Path"]
         logging.debug(f"Full file path: {fullpath}")
         gen_subtitles_queue(path_mapping(fullpath), transcribe_or_translate)
 
     return ""
-    
+
+
 @app.post("/batch")
 def batch(
-        directory: str = Query(...),
-        forceLanguage: Union[str, None] = Query(default=None)
+    directory: str = Query(...), forceLanguage: Union[str, None] = Query(default=None)
 ):
     transcribe_existing(directory, LanguageCode.from_string(forceLanguage))
+
 
 # ============================================================================
 # REFACTORED /ASR ENDPOINT WITH HASH-BASED DEDUPLICATION AND BLOCKING
 # ============================================================================
 
+
 @app.post("/asr")
 async def asr(
-    task: Union[str, None] = Query(default="transcribe", enum=["transcribe", "translate"]),
+    task: Union[str, None] = Query(
+        default="transcribe", enum=["transcribe", "translate"]
+    ),
     language: Union[str, None] = Query(default=None),
     video_file: Union[str, None] = Query(default=None),
     initial_prompt: Union[str, None] = Query(default=None),
     audio_file: UploadFile = File(...),
     encode: bool = Query(default=True, description="Encode audio first through ffmpeg"),
-    output: Union[str, None] = Query(default="srt", enum=["txt", "vtt", "srt", "tsv", "json"]),
+    output: Union[str, None] = Query(
+        default="srt", enum=["txt", "vtt", "srt", "tsv", "json"]
+    ),
     word_timestamps: bool = Query(default=False, description="Word-level timestamps"),
 ):
     """
-    ASR endpoint that uses audio content hash for deduplication. 
+    ASR endpoint that uses audio content hash for deduplication.
     BLOCKS until processing is complete, then returns the result.
-    
+
     If identical audio + task + language is already being processed,
     waits for that task to complete and returns the same result.
     """
     task_id = None
-    
+
     try:
         logging.info(
-            f"ASR {task.capitalize()} received for file '{video_file}'" 
-            if video_file 
+            f"ASR {task.capitalize()} received for file '{video_file}'"
+            if video_file
             else f"ASR {task.capitalize()} received"
         )
-        
+
         # Read audio file content into memory
         file_content = await audio_file.read()
-        
+
         if not file_content:
             await audio_file.close()
-            return {
-                "status": "error",
-                "message": "Audio file is empty"
-            }
-        
+            return {"status": "error", "message": "Audio file is empty"}
+
         # Generate deterministic hash from audio (and optionally task/language)
         audio_hash = generate_audio_hash(file_content, task, language)
-        
+
         # FIX: Use video file path if available to match TRANSCRIBE tasks
         if video_file:
             task_id = path_mapping(video_file)
-            logging.debug(f"Using mapped video file path as task ID for ASR request: {task_id}")
+            logging.debug(
+                f"Using mapped video file path as task ID for ASR request: {task_id}"
+            )
         else:
             task_id = f"asr-{audio_hash}"
             logging.debug(f"Generated audio hash: {audio_hash} for ASR request")
-        
+
         # Handle forced language
         final_language = language
-        if force_detected_language_to: 
+        if force_detected_language_to:
             final_language = force_detected_language_to.to_iso_639_1()
             logging.info(f"Forcing detected language to {force_detected_language_to}")
-        
+
         # Create result container for this task
         with task_results_lock:
             if task_id not in task_results:
                 task_results[task_id] = TaskResult()
             task_result = task_results[task_id]
-        
+
         # Queue the ASR task
         asr_task_data = {
-            'path': task_id, # DeduplicatedQueue uses this for dedup
-            'type': 'asr',
-            'task': task,
-            'language': final_language,
-            'video_file': video_file,
-            'initial_prompt': initial_prompt,
-            'audio_content': file_content,
-            'encode': encode,
-            'output': output,
-            'word_timestamps': word_timestamps,
-            'result_container': task_result,
+            "path": task_id,  # DeduplicatedQueue uses this for dedup
+            "type": "asr",
+            "task": task,
+            "language": final_language,
+            "video_file": video_file,
+            "initial_prompt": initial_prompt,
+            "audio_content": file_content,
+            "encode": encode,
+            "output": output,
+            "word_timestamps": word_timestamps,
+            "result_container": task_result,
         }
-        
+
         # Try to queue (returns False if already queued/processing)
         if task_queue.put(asr_task_data):
             logging.info(f"ASR task {task_id} queued")
         else:
-            logging.info(f"ASR task {task_id} already queued/processing - waiting for result")
-        
+            logging.info(
+                f"ASR task {task_id} already queued/processing - waiting for result"
+            )
+
         # EVENT LOOP BLOCK FIX: Use asyncio.to_thread so FastAPI can still respond to /status
         if await asyncio.to_thread(task_result.wait, asr_timeout):
             if task_result.error:
@@ -994,24 +1273,26 @@ async def asr(
                 return {
                     "status": "error",
                     "task_id": task_id,
-                    "message": f"ASR processing failed: {task_result.error}"
+                    "message": f"ASR processing failed: {task_result.error}",
                 }
-            else: 
+            else:
                 logging.info(f"ASR task {task_id} completed")
                 return StreamingResponse(
                     iter(task_result.result),
                     media_type="text/plain",
-                    headers={'Source': f'{task.capitalize()}d using Qwen3-ASR from Subgen!'}
+                    headers={
+                        "Source": f"{task.capitalize()}d using Qwen3-ASR from Subgen!"
+                    },
                 )
         else:
             logging.error(f"ASR task {task_id} timed out")
             return {
                 "status": "timeout",
                 "task_id": task_id,
-                "message": f"ASR processing timed out after {asr_timeout} seconds"
+                "message": f"ASR processing timed out after {asr_timeout} seconds",
             }
-            
-    except Exception as e: 
+
+    except Exception as e:
         logging.error(f"Error in ASR endpoint: {e}", exc_info=True)
         return {"status": "error", "message": f"Error: {str(e)}"}
     finally:
@@ -1022,139 +1303,169 @@ async def asr(
                 del task_results[task_id]
                 logging.debug(f"Cleaned up task_results entry for {task_id}")
 
+
 # ============================================================================
 # ASR WORKER FUNCTION
 # ============================================================================
 
+
 def get_audio_start_time(video_path: str) -> float:
     """
     Use ffprobe to detect the audio stream start_time offset from a video file.
-    
+
     Some containers (especially Amazon WEB-DL) have audio streams that start
     later than the video stream. Bazarr compensates with adelay silence padding,
     but Whisper ignores digital silence, causing all timestamps to be early by
     the start_time offset.
-    
+
     Returns the audio start_time in seconds, or 0.0 if not detectable.
     """
     if not video_path or not os.path.isfile(video_path):
         return 0.0
-    
+
     try:
-        result = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'a:0',
-             '-show_entries', 'stream=start_time',
-             '-of', 'json', video_path],
-            capture_output=True, text=True, timeout=10
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "a:0",
+                "-show_entries",
+                "stream=start_time",
+                "-of",
+                "json",
+                video_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode != 0:
             return 0.0
-        
+
         data = json.loads(result.stdout)
-        streams = data.get('streams', [])
+        streams = data.get("streams", [])
         if streams:
-            start_time = float(streams[0].get('start_time', 0))
+            start_time = float(streams[0].get("start_time", 0))
             if start_time > 0.1:  # only apply for significant offsets
-                logging.info(f"Detected audio start_time offset: {start_time:.3f}s for {os.path.basename(video_path)}")
+                logging.info(
+                    f"Detected audio start_time offset: {start_time:.3f}s for {os.path.basename(video_path)}"
+                )
                 return start_time
     except (subprocess.TimeoutExpired, json.JSONDecodeError, ValueError, OSError) as e:
         logging.debug(f"Could not detect audio start_time for {video_path}: {e}")
-    
+
     return 0.0
 
 
 def apply_timestamp_offset(result, offset: float) -> None:
     """
     Shift all segment and word timestamps forward by the given offset.
-    
+
     This compensates for audio start_time offsets in containers where the
     audio stream starts later than the video stream. Whisper produces
     timestamps relative to the audio stream start, but subtitles need
     to be aligned to the video/container timeline.
-    
+
     Note: Segment.start/end are properties that delegate to the first/last
     word timestamps, so we only need to shift word timestamps to avoid
     double-application. For segments without words, we shift _default_start/end.
     """
     if offset <= 0:
         return
-    
+
     for segment in result.segments:
-        if hasattr(segment, 'words') and segment.words:
+        if hasattr(segment, "words") and segment.words:
             for word in segment.words:
                 word.start += offset
                 word.end += offset
         else:
             # Segments without words use _default_start/_default_end
-            if hasattr(segment, '_default_start'):
+            if hasattr(segment, "_default_start"):
                 segment._default_start += offset
-            if hasattr(segment, '_default_end'):
+            if hasattr(segment, "_default_end"):
                 segment._default_end += offset
-    
-    logging.info(f"Applied +{offset:.3f}s timestamp offset to {len(result.segments)} segments")
+
+    logging.info(
+        f"Applied +{offset:.3f}s timestamp offset to {len(result.segments)} segments"
+    )
 
 
 def asr_task_worker(task_data: dict) -> None:
     """
-    Worker function that processes ASR tasks from the queue. 
+    Worker function that processes ASR tasks from the queue.
     Called by transcription_worker when task type is 'asr'.
     """
     result = None
-    task_id = task_data.get('path', 'unknown')
-    result_container = task_data.get('result_container')
-    
+    task_id = task_data.get("path", "unknown")
+    result_container = task_data.get("result_container")
+
     try:
-        task = task_data['task']
-        language = task_data['language']
-        video_file = task_data.get('video_file')
-        file_content = task_data['audio_content']
-        encode = task_data['encode']
-        
+        task = task_data["task"]
+        language = task_data["language"]
+        video_file = task_data.get("video_file")
+        file_content = task_data["audio_content"]
+        encode = task_data["encode"]
+
         start_model()
 
         # Handle audio encoding
         if encode:
             audio_input = file_content
         else:
-            audio_input = np.frombuffer(file_content, np.int16).flatten().astype(np.float32) / 32768.0
+            audio_input = (
+                np.frombuffer(file_content, np.int16).flatten().astype(np.float32)
+                / 32768.0
+            )
 
         # Detect audio start_time offset from source file (if accessible)
         audio_offset = get_audio_start_time(video_file) if video_file else 0.0
-        
+
         # Perform transcription
         result = model.transcribe(
             audio=audio_input,
             language=language,
             task=task,
         )
-        
+
         # Apply audio start_time offset to compensate for container timing
         if audio_offset > 0:
             apply_timestamp_offset(result, audio_offset)
-        
+
         appendLine(result)
-        
+
         # Set result for blocking endpoint
         if result_container:
-            result_container.set_result(result.to_srt_vtt(filepath=None, word_level=word_level_highlight))
+            result_container.set_result(
+                result.to_srt_vtt(filepath=None, word_level=word_level_highlight)
+            )
 
     except Exception as e:
         logging.error(f"Error processing ASR (ID: {task_id}): {e}", exc_info=True)
-        if result_container: 
+        if result_container:
             result_container.set_error(str(e))
-    
+
     finally:
         delete_model()
 
-async def get_audio_chunk(audio_file, offset=detect_language_offset, length=detect_language_length, sample_rate=16000, audio_format=np.int16):
+
+async def get_audio_chunk(
+    audio_file,
+    offset=detect_language_offset,
+    length=detect_language_length,
+    sample_rate=16000,
+    audio_format=np.int16,
+):
     """
     Extract a chunk of audio from a file, starting at the given offset and of the given length.
-    
+
     :param audio_file: The audio file (UploadFile or file-like object).
     :param offset: The offset in seconds to start the extraction.
     :param length: The length in seconds for the chunk to be extracted.
     :param sample_rate: The sample rate of the audio (default 16000).
     :param audio_format: The audio format to interpret (default int16, 2 bytes per sample).
-    
+
     :return: A numpy array containing the extracted audio chunk.
     """
 
@@ -1174,13 +1485,17 @@ async def get_audio_chunk(audio_file, offset=detect_language_offset, length=dete
     chunk = await audio_file.read(length_in_bytes)
 
     # Convert the chunk into a numpy array (normalized to float32)
-    audio_data = np.frombuffer(chunk, dtype=audio_format).flatten().astype(np.float32) / 32768.0
+    audio_data = (
+        np.frombuffer(chunk, dtype=audio_format).flatten().astype(np.float32) / 32768.0
+    )
 
     return audio_data
+
 
 # ============================================================================
 # REFACTORED /DETECT-LANGUAGE ENDPOINT WITH HASH-BASED DEDUPLICATION AND BLOCKING
 # ============================================================================
+
 
 @app.post("/detect-language")
 async def detect_language(
@@ -1188,166 +1503,202 @@ async def detect_language(
     encode: bool = Query(default=True),
     video_file: Union[str, None] = Query(default=None),
     detect_lang_length: int = Query(default=detect_language_length),
-    detect_lang_offset: int = Query(default=detect_language_offset)
+    detect_lang_offset: int = Query(default=detect_language_offset),
 ):
     global active_direct_tasks
-    
-    if force_detected_language_to: 
+
+    if force_detected_language_to:
         await audio_file.close()
-        return {"detected_language": force_detected_language_to.to_name(), "language_code": force_detected_language_to.to_iso_639_1()}
-    
+        return {
+            "detected_language": force_detected_language_to.to_name(),
+            "language_code": force_detected_language_to.to_iso_639_1(),
+        }
+
     task_started = False
     try:
         file_content = await audio_file.read()
         if not file_content:
-            return {"detected_language": "Unknown", "language_code": "und", "status": "error"}
-            
-        logging.info("Immediate language detection (Queue Bypass)" + (f" for {video_file}" if video_file else ""))
-        
+            return {
+                "detected_language": "Unknown",
+                "language_code": "und",
+                "status": "error",
+            }
+
+        logging.info(
+            "Immediate language detection (Queue Bypass)"
+            + (f" for {video_file}" if video_file else "")
+        )
+
         # Track that we are directly using the model outside the queue
         with active_direct_tasks_lock:
             active_direct_tasks += 1
         task_started = True
-        
+
         # --- RUN IMMEDIATELY ---
         # EVENT LOOP BLOCK FIX: Offload heavy ops to background thread
         await asyncio.to_thread(start_model)
-        
+
         if encode:
             audio_bytes = await asyncio.to_thread(
-                extract_audio_segment_from_content, 
-                file_content, 
-                detect_lang_offset, 
-                detect_lang_length
+                extract_audio_segment_from_content,
+                file_content,
+                detect_lang_offset,
+                detect_lang_length,
             )
-            audio_data = np.frombuffer(audio_bytes, np.int16).flatten().astype(np.float32) / 32768.0
+            audio_data = (
+                np.frombuffer(audio_bytes, np.int16).flatten().astype(np.float32)
+                / 32768.0
+            )
         else:
-            audio_data = await get_audio_chunk(audio_file, detect_lang_offset, detect_lang_length)
+            audio_data = await get_audio_chunk(
+                audio_file, detect_lang_offset, detect_lang_length
+            )
 
         # Offload the heavy AI inference to a background thread
         result = await asyncio.to_thread(model.transcribe, audio=audio_data)
-        
+
         detected = LanguageCode.from_string(result.language)
-        
-        logging.info(f"Detect Language Result: {detected.to_name()} ({detected.to_iso_639_1()})")
-        
+
+        logging.info(
+            f"Detect Language Result: {detected.to_name()} ({detected.to_iso_639_1()})"
+        )
+
         return {
             "detected_language": detected.to_name(),
-            "language_code": detected.to_iso_639_1()
+            "language_code": detected.to_iso_639_1(),
         }
 
-    except Exception as e: 
+    except Exception as e:
         logging.error(f"Error in API detect-language: {e}", exc_info=True)
-        return {"detected_language": "Unknown", "language_code": "und", "status": "error"}
-    finally: 
+        return {
+            "detected_language": "Unknown",
+            "language_code": "und",
+            "status": "error",
+        }
+    finally:
         await audio_file.close()
         # Decrement counter so delete_model() knows we are done
         if task_started:
             with active_direct_tasks_lock:
                 active_direct_tasks -= 1
-            delete_model() # Schedules VRAM cleanup if system is idle
+            delete_model()  # Schedules VRAM cleanup if system is idle
+
 
 # ============================================================================
 # DETECT LANGUAGE WORKER FOR UPLOADED AUDIO
 # ============================================================================
 
+
 def detect_language_from_upload(task_data: dict) -> None:
     """
-    Worker function that processes detect-language tasks from uploaded audio. 
+    Worker function that processes detect-language tasks from uploaded audio.
     Sets the result in the result_container when complete.
     """
     detected_language = LanguageCode.NONE
-    task_id = task_data.get('path', 'unknown')
-    result_container = task_data.get('result_container')
-    
+    task_id = task_data.get("path", "unknown")
+    result_container = task_data.get("result_container")
+
     try:
-        video_file = task_data.get('video_file')
-        file_content = task_data['audio_content']
-        encode = task_data['encode']
-        detect_lang_length = task_data['detect_lang_length']
-        detect_lang_offset = task_data['detect_lang_offset']
-        
+        video_file = task_data.get("video_file")
+        file_content = task_data["audio_content"]
+        encode = task_data["encode"]
+        detect_lang_length = task_data["detect_lang_length"]
+        detect_lang_offset = task_data["detect_lang_offset"]
+
         logging.info(
             f"Detecting language for '{video_file}' ({detect_lang_length}s starting at {detect_lang_offset}s) - ID: {task_id}"
             if video_file
             else f"Detecting language ({detect_lang_length}s starting at {detect_lang_offset}s) - ID: {task_id}"
         )
-        
+
         start_model()
 
         # Handle audio extraction
         if encode:
             audio_input = extract_audio_segment_from_content(
-                file_content, 
-                detect_lang_offset, 
-                detect_lang_length
+                file_content, detect_lang_offset, detect_lang_length
             )
         else:
-            audio_input = np.frombuffer(file_content, np.int16).flatten().astype(np.float32) / 32768.0
+            audio_input = (
+                np.frombuffer(file_content, np.int16).flatten().astype(np.float32)
+                / 32768.0
+            )
 
         result = model.transcribe(audio=audio_input)
         detected_language = LanguageCode.from_string(result.language)
         language_code = detected_language.to_iso_639_1()
-        
-        logging.info(f"Detected language: {detected_language.to_name()} ({language_code}) - ID: {task_id}")
-        
+
+        logging.info(
+            f"Detected language: {detected_language.to_name()} ({language_code}) - ID: {task_id}"
+        )
+
         # Set the result for the blocking endpoint
         if result_container:
-            result_container.set_result({
-                "detected_language": detected_language.to_name(),
-                "language_code": language_code
-            })
+            result_container.set_result(
+                {
+                    "detected_language": detected_language.to_name(),
+                    "language_code": language_code,
+                }
+            )
 
     except Exception as e:
         logging.error(
-            f"Error detecting language (ID: {task_id}) for '{task_data.get('video_file')}': {e}"
-            if task_data.get('video_file')
-            else f"Error detecting language (ID: {task_id}): {e}",
-            exc_info=True
+            (
+                f"Error detecting language (ID: {task_id}) for '{task_data.get('video_file')}': {e}"
+                if task_data.get("video_file")
+                else f"Error detecting language (ID: {task_id}): {e}"
+            ),
+            exc_info=True,
         )
-        if result_container: 
+        if result_container:
             result_container.set_error(str(e))
-    
+
     finally:
         delete_model()
+
 
 # ============================================================================
 # HELPER: Extract audio segment from in-memory content
 # ============================================================================
 
-def extract_audio_segment_from_content(audio_content: bytes, start_time: int, duration: int) -> bytes:
+
+def extract_audio_segment_from_content(
+    audio_content: bytes, start_time: int, duration: int
+) -> bytes:
     """
     Extract a segment of audio from in-memory content using FFmpeg.
-    
+
     Args:
         audio_content: Raw audio bytes
         start_time: Start time in seconds
         duration: Duration in seconds
-        
+
     Returns:
         Audio bytes of the extracted segment
     """
-    try: 
-        logging.info(f"Extracting audio segment: start_time={start_time}s, duration={duration}s")
-        
+    try:
+        logging.info(
+            f"Extracting audio segment: start_time={start_time}s, duration={duration}s"
+        )
+
         out, _ = (
-            ffmpeg
-            .input('pipe:0', ss=start_time, t=duration)
-            .output('pipe:1', format='wav', acodec='pcm_s16le', ar=16000)
+            ffmpeg.input("pipe:0", ss=start_time, t=duration)
+            .output("pipe:1", format="wav", acodec="pcm_s16le", ar=16000)
             .run(input=audio_content, capture_stdout=True, capture_stderr=True)
         )
-        
+
         if not out:
             raise ValueError("FFmpeg output is empty")
-        
+
         return out
 
     except ffmpeg.Error as e:
         logging.error(f"FFmpeg error: {e.stderr.decode()}")
-        return audio_content # Fallback to original if extraction fails
+        return audio_content  # Fallback to original if extraction fails
     except Exception as e:
         logging.error(f"Error extracting audio segment: {str(e)}")
-        return audio_content # Fallback to original
+        return audio_content  # Fallback to original
+
 
 def detect_language_task(path, original_task_data=None):
     """
@@ -1355,95 +1706,104 @@ def detect_language_task(path, original_task_data=None):
     Returns the task data to be queued for transcription.
     """
     detected_language = LanguageCode.NONE
-    
+
     try:
         logging.info(
             f"Detecting language of file: {path} "
             f"({detect_language_length}s starting at {detect_language_offset}s)"
         )
-        
+
         start_model()
-        
+
         audio_segment = extract_audio_segment_to_memory(
-            path, 
-            detect_language_offset, 
-            int(detect_language_length)
+            path, detect_language_offset, int(detect_language_length)
         )
-        
+
         # FIX: Use Qwen3-ASR for language detection (pass language=None for auto-detect)
         result = model.transcribe(audio=audio_segment)
         detected_language = LanguageCode.from_string(result.language)
-        
+
         logging.info(f"Detected language: {detected_language.to_name()}")
 
     except Exception as e:
         logging.error(f"Error detecting language for file: {e}", exc_info=True)
-        
+
     finally:
         delete_model()
-        
+
     # Create transcription task with detected language
     task_data = {
-        'path': path,
-        'type': 'transcribe',
-        'transcribe_or_translate': transcribe_or_translate,
-        'force_language': detected_language
+        "path": path,
+        "type": "transcribe",
+        "transcribe_or_translate": transcribe_or_translate,
+        "force_language": detected_language,
     }
-    
+
     # Carry over metadata (Plex IDs, etc.) from the original task
     if original_task_data:
         for key, value in original_task_data.items():
             if key not in task_data:
                 task_data[key] = value
-                
+
     return task_data
+
 
 def extract_audio_segment_to_memory(input_file, start_time, duration):
     """
     Extract a segment of audio from input_file, starting at start_time for duration seconds.
-    
+
     :param input_file: UploadFile object or path to the input audio file
     :param start_time: Start time in seconds (e.g., 60 for 1 minute)
     :param duration: Duration in seconds (e.g., 30 for 30 seconds)
     :return: bytes containing the audio segment, or None on error
-    
+
     Changed to return bytes directly instead of BytesIO to prevent memory leak.
     Previously returned BytesIO objects were never closed, causing 480KB-10MB leak per call.
     """
     try:
-        if hasattr(input_file, 'file') and hasattr(input_file.file, 'read'): # Handling UploadFile
-            input_file.file.seek(0) # Ensure the file pointer is at the beginning
-            input_stream = 'pipe:0'
-            input_kwargs = {'input': input_file.file.read()}
-        elif isinstance(input_file, str): # Handling local file path
+        if hasattr(input_file, "file") and hasattr(
+            input_file.file, "read"
+        ):  # Handling UploadFile
+            input_file.file.seek(0)  # Ensure the file pointer is at the beginning
+            input_stream = "pipe:0"
+            input_kwargs = {"input": input_file.file.read()}
+        elif isinstance(input_file, str):  # Handling local file path
             input_stream = input_file
             input_kwargs = {}
         else:
-            raise ValueError("Invalid input: input_file must be a file path or an UploadFile object.")
+            raise ValueError(
+                "Invalid input: input_file must be a file path or an UploadFile object."
+            )
 
-        logging.info(f"Extracting audio from: {input_stream}, start_time: {start_time}, duration: {duration}")
+        logging.info(
+            f"Extracting audio from: {input_stream}, start_time: {start_time}, duration: {duration}"
+        )
 
         # Run FFmpeg to extract the desired segment
         out, _ = (
-            ffmpeg
-            .input(input_stream, ss=start_time, t=duration) # Set start time and duration
-            .output('pipe:1', format='wav', acodec='pcm_s16le', ar=16000) # Output to pipe as WAV
+            ffmpeg.input(
+                input_stream, ss=start_time, t=duration
+            )  # Set start time and duration
+            .output(
+                "pipe:1", format="wav", acodec="pcm_s16le", ar=16000
+            )  # Output to pipe as WAV
             .run(capture_stdout=True, capture_stderr=True, **input_kwargs)
         )
 
         # Check if the output is empty or null
         if not out:
             raise ValueError("FFmpeg output is empty, possibly due to invalid input.")
-        
+
         # Return bytes directly instead of BytesIO to prevent memory leak
         return out
 
     except ffmpeg.Error as e:
         logging.error(f"FFmpeg error: {e.stderr.decode()}")
         return None
-    except Exception as e: 
+    except Exception as e:
         logging.error(f"Error: {str(e)}")
         return None
+
 
 def start_model():
     global model
@@ -1459,12 +1819,13 @@ def start_model():
                 aligner_path=forced_aligner_model if use_forced_aligner else None,
             )
 
+
 def schedule_model_cleanup():
     """Schedule model cleanup with a delay to allow concurrent requests.
-    
+
     Properly joins cancelled timers to prevent thread accumulation."""
     global model_cleanup_timer, model_cleanup_lock
-    
+
     previous_timer = None
     with model_cleanup_lock:
         # Cancel any existing timer
@@ -1483,19 +1844,20 @@ def schedule_model_cleanup():
     if previous_timer is not None:
         previous_timer.join(timeout=1)
 
+
 def perform_model_cleanup():
     """Actually perform the model cleanup."""
     global model, model_cleanup_timer, model_cleanup_lock, active_direct_tasks
-    
-    with model_cleanup_lock: 
+
+    with model_cleanup_lock:
         logging.debug("Executing scheduled model cleanup")
-        
+
         with active_direct_tasks_lock:
             system_is_idle = task_queue.is_idle() and active_direct_tasks == 0
-            
+
         if clear_vram_on_complete and system_is_idle:
             logging.debug("Queue and direct tasks idle; clearing model from memory.")
-            if model: 
+            if model:
                 try:
                     model.unload_model()
                     del model
@@ -1503,21 +1865,24 @@ def perform_model_cleanup():
                     logging.info("Model unloaded from memory")
                 except Exception as e:
                     logging.error(f"Error unloading model: {e}")
-            
-            if transcribe_device.lower() == 'cuda' and torch.cuda.is_available():
+
+            if transcribe_device.lower() == "cuda" and torch.cuda.is_available():
                 try:
                     torch.cuda.empty_cache()
                     logging.debug("CUDA cache cleared.")
-                except Exception as e: 
+                except Exception as e:
                     logging.error(f"Error clearing CUDA cache: {e}")
         else:
-            logging.debug("Queue not idle or clear_vram disabled; skipping model cleanup")
-        
-        if os.name != 'nt': # don't garbage collect on Windows
+            logging.debug(
+                "Queue not idle or clear_vram disabled; skipping model cleanup"
+            )
+
+        if os.name != "nt":  # don't garbage collect on Windows
             gc.collect()
-            ctypes.CDLL(ctypes.util.find_library('c')).malloc_trim(0)
-        
+            ctypes.CDLL(ctypes.util.find_library("c")).malloc_trim(0)
+
         model_cleanup_timer = None
+
 
 def delete_model():
     """
@@ -1536,12 +1901,16 @@ def delete_model():
     if system_is_idle:
         schedule_model_cleanup()
     else:
-        # If there are 10 items left in the queue, we simply do nothing. 
+        # If there are 10 items left in the queue, we simply do nothing.
         # The very last worker to finish the last item will trigger the timer.
-        logging.debug("Tasks still in queue or processing; skipping model cleanup scheduling.")
+        logging.debug(
+            "Tasks still in queue or processing; skipping model cleanup scheduling."
+        )
+
 
 def is_audio_file_extension(file_extension):
     return file_extension.casefold() in AUDIO_EXTENSIONS
+
 
 def write_lrc(result, file_path):
     with open(file_path, "w") as file:
@@ -1549,33 +1918,51 @@ def write_lrc(result, file_path):
             minutes, seconds = divmod(int(segment.start), 60)
             fraction = int((segment.start - int(segment.start)) * 100)
             # remove embedded newlines in text, since some players ignore text after newlines
-            text = segment.text[:].replace('\n', '')
+            text = segment.text[:].replace("\n", "")
             file.write(f"[{minutes:02d}:{seconds:02d}.{fraction:02d}]{text}\n")
 
-def send_completion_webhook(source_file_path: str, subtitle_file_path: str, language: LanguageCode, task_type: str):
+
+def send_completion_webhook(
+    source_file_path: str,
+    subtitle_file_path: str,
+    language: LanguageCode,
+    task_type: str,
+):
     """Sends a JSON POST request to a configured webhook URL upon task completion."""
     if not webhook_url_completed:
         return
-        
+
     # Dynamically make it past-tense (transcribe -> transcribed, translate -> translated)
-    event_status = f"{task_type}d" if task_type in["transcribe", "translate"] else task_type
-        
+    event_status = (
+        f"{task_type}d" if task_type in ["transcribe", "translate"] else task_type
+    )
+
     payload = {
         "event": event_status,
         "file": os.path.abspath(source_file_path),
         "subtitle": os.path.abspath(subtitle_file_path),
-        "language": language.to_iso_639_1()
+        "language": language.to_iso_639_1(),
     }
-    
+
     try:
-        logging.info(f"Sending completion webhook ({event_status}) to {webhook_url_completed}")
+        logging.info(
+            f"Sending completion webhook ({event_status}) to {webhook_url_completed}"
+        )
         response = requests.post(webhook_url_completed, json=payload, timeout=10)
         response.raise_for_status()
-        logging.debug(f"Webhook successfully delivered. Status code: {response.status_code}")
+        logging.debug(
+            f"Webhook successfully delivered. Status code: {response.status_code}"
+        )
     except Exception as e:
         logging.error(f"Failed to send completion webhook: {e}")
 
-def gen_subtitles(file_path: str, transcription_type: str, force_language: LanguageCode = LanguageCode.NONE, audio_tracks=None) -> None:
+
+def gen_subtitles(
+    file_path: str,
+    transcription_type: str,
+    force_language: LanguageCode = LanguageCode.NONE,
+    audio_tracks=None,
+) -> None:
     """Generates subtitles for a video file.
 
     Args:
@@ -1594,10 +1981,12 @@ def gen_subtitles(file_path: str, transcription_type: str, force_language: Langu
 
         data = file_path
         # Extract audio from the file if it has multiple audio tracks
-        extracted_audio_file = handle_multiple_audio_tracks(file_path, force_language, audio_tracks=audio_tracks)
+        extracted_audio_file = handle_multiple_audio_tracks(
+            file_path, force_language, audio_tracks=audio_tracks
+        )
         if extracted_audio_file:
             data = extracted_audio_file
-        
+
         result = model.transcribe(
             data,
             language=force_language.to_iso_639_1(),
@@ -1611,22 +2000,28 @@ def gen_subtitles(file_path: str, transcription_type: str, force_language: Langu
 
         # If it is an audio file, write the LRC file
         if is_audio_file and lrc_for_audio_files:
-            subtitle_file_path = file_name + '.lrc'
+            subtitle_file_path = file_name + ".lrc"
             write_lrc(result, subtitle_file_path)
         else:
             subtitle_file_path = name_subtitle(file_path, output_language)
             result.to_srt_vtt(subtitle_file_path, word_level=word_level_highlight)
-            
+
         # Trigger the downstream webhook
-        send_completion_webhook(file_path, subtitle_file_path, output_language, transcription_type)
+        send_completion_webhook(
+            file_path, subtitle_file_path, output_language, transcription_type
+        )
 
         # FIX: Provide the generated subtitle result to any waiting ASR endpoint requests
         with task_results_lock:
             if file_path in task_results:
-                task_results[file_path].set_result(result.to_srt_vtt(filepath=None, word_level=word_level_highlight))
+                task_results[file_path].set_result(
+                    result.to_srt_vtt(filepath=None, word_level=word_level_highlight)
+                )
 
     except Exception as e:
-        logging.info(f"Error processing or transcribing {file_path} in {force_language}: {e}")
+        logging.info(
+            f"Error processing or transcribing {file_path} in {force_language}: {e}"
+        )
         # FIX: Inform waiting ASR endpoint requests of the error so they don't hang
         with task_results_lock:
             if file_path in task_results:
@@ -1634,10 +2029,11 @@ def gen_subtitles(file_path: str, transcription_type: str, force_language: Langu
 
     finally:
         delete_model()
-        
+
+
 def define_subtitle_language_naming(language: LanguageCode, type):
     """
-    Determines the naming format for a subtitle language based on the given type. 
+    Determines the naming format for a subtitle language based on the given type.
 
     Args:
         language (LanguageCode): The language code object containing methods to get different formats of the language name.
@@ -1654,30 +2050,34 @@ def define_subtitle_language_naming(language: LanguageCode, type):
         "ISO_639_2_T": language.to_iso_639_2_t,
         "ISO_639_2_B": language.to_iso_639_2_b,
         "NAME": language.to_name,
-        "NATIVE": lambda: language.to_name(in_english=False)
+        "NATIVE": lambda: language.to_name(in_english=False),
     }
-    if transcribe_or_translate == 'translate':
+    if transcribe_or_translate == "translate":
         language = LanguageCode.ENGLISH
     return switch_dict.get(type, language.to_name)()
 
+
 def name_subtitle(file_path: str, language: LanguageCode) -> str:
     """
-    Name the subtitle file to be written, based on the source file and the language of the subtitle. 
-    
-    Args: 
+    Name the subtitle file to be written, based on the source file and the language of the subtitle.
+
+    Args:
         file_path: The path to the source file.
         language: The language of the subtitle.
-    
+
     Returns:
         The name of the subtitle file to be written.
     """
     subgen_part = ".subgen" if show_in_subname_subgen else ""
     model_part = f".{model_display_name}" if show_in_subname_model else ""
     lang_part = define_subtitle_language_naming(language, subtitle_language_naming_type)
-    
+
     return f"{os.path.splitext(file_path)[0]}{subgen_part}{model_part}.{lang_part}.srt"
-    
-def handle_multiple_audio_tracks(file_path: str, language: LanguageCode | None = None, audio_tracks=None) -> bytes | None:
+
+
+def handle_multiple_audio_tracks(
+    file_path: str, language: LanguageCode | None = None, audio_tracks=None
+) -> bytes | None:
     """
     Handles the possibility of a media file having multiple audio tracks.
 
@@ -1698,10 +2098,17 @@ def handle_multiple_audio_tracks(file_path: str, language: LanguageCode | None =
         audio_tracks = get_audio_tracks(file_path)
 
     if len(audio_tracks) > 1:
-        logging.debug(f"Handling multiple audio tracks from {file_path} and planning to extract audio track of language {language}")
+        logging.debug(
+            f"Handling multiple audio tracks from {file_path} and planning to extract audio track of language {language}"
+        )
         logging.debug(
             "Audio tracks:\n"
-            + "\n".join([f"  - {track['index']}: {track['codec']} {track['language']} {('default' if track['default'] else '')}" for track in audio_tracks])
+            + "\n".join(
+                [
+                    f"  - {track['index']}: {track['codec']} {track['language']} {('default' if track['default'] else '')}"
+                    for track in audio_tracks
+                ]
+            )
         )
 
         audio_track = None
@@ -1709,16 +2116,19 @@ def handle_multiple_audio_tracks(file_path: str, language: LanguageCode | None =
             audio_track = get_audio_track_by_language(audio_tracks, language)
         if audio_track is None:
             audio_track = audio_tracks[0]
-        
+
         audio_bytes = extract_audio_track_to_memory(file_path, audio_track["index"])
         if audio_bytes is None:
-            logging.error(f"Failed to extract audio track {audio_track['index']} from {file_path}")
+            logging.error(
+                f"Failed to extract audio track {audio_track['index']} from {file_path}"
+            )
             return None
     return audio_bytes
 
+
 def extract_audio_track_to_memory(input_video_path, track_index) -> bytes | None:
     """
-    Extract a specific audio track from a video file to memory using FFmpeg. 
+    Extract a specific audio track from a video file to memory using FFmpeg.
 
     Args:
         input_video_path (str): The path to the video file.
@@ -1726,12 +2136,14 @@ def extract_audio_track_to_memory(input_video_path, track_index) -> bytes | None
 
     Returns:
         bytes | None: The audio data as bytes, or None if extraction failed.
-        
+
         Changed to return bytes directly instead of BytesIO to prevent memory leak.
         Previously returned BytesIO objects were never closed, causing memory leaks.
     """
     if track_index is None:
-        logging.warning(f"Skipping audio track extraction for {input_video_path} because track index is None")
+        logging.warning(
+            f"Skipping audio track extraction for {input_video_path} because track index is None"
+        )
         return None
 
     try:
@@ -1739,14 +2151,14 @@ def extract_audio_track_to_memory(input_video_path, track_index) -> bytes | None
         out, _ = (
             ffmpeg.input(input_video_path)
             .output(
-                "pipe:", # Direct output to a pipe
-                map=f"0:{track_index}", # Select the specific audio track
-                format="wav", # Output format
-                ac=1, # Mono audio (optional)
-                ar=16000, # Sample rate 16 kHz (recommended for speech models)
-                loglevel="quiet"
+                "pipe:",  # Direct output to a pipe
+                map=f"0:{track_index}",  # Select the specific audio track
+                format="wav",  # Output format
+                ac=1,  # Mono audio (optional)
+                ar=16000,  # Sample rate 16 kHz (recommended for speech models)
+                loglevel="quiet",
             )
-            .run(capture_stdout=True, capture_stderr=True) # Capture output in memory
+            .run(capture_stdout=True, capture_stderr=True)  # Capture output in memory
         )
         # Return bytes directly instead of BytesIO to prevent memory leak
         return out
@@ -1755,21 +2167,23 @@ def extract_audio_track_to_memory(input_video_path, track_index) -> bytes | None
         logging.error(f"FFmpeg error: {e.stderr.decode()}")
         return None
 
+
 def get_audio_track_by_language(audio_tracks, language):
     """
-    Returns the first audio track with the given language. 
-    
+    Returns the first audio track with the given language.
+
     Args:
         audio_tracks (list): A list of dictionaries containing information about each audio track.
-        language (str): The language of the audio track to search for. 
-    
+        language (str): The language of the audio track to search for.
+
     Returns:
         dict: The first audio track with the given language, or None if no match is found.
     """
-    for track in audio_tracks: 
-        if track['language'] == language:
+    for track in audio_tracks:
+        if track["language"] == language:
             return track
     return None
+
 
 def choose_transcribe_language(file_path, forced_language, audio_tracks=None):
     """
@@ -1788,17 +2202,23 @@ def choose_transcribe_language(file_path, forced_language, audio_tracks=None):
         language of the audio tracks. Returns LanguageCode.NONE if undetermined.
     """
     if forced_language:
-        logging.debug(f"ENV FORCE_LANGUAGE is set: Forcing language to {forced_language}")
+        logging.debug(
+            f"ENV FORCE_LANGUAGE is set: Forcing language to {forced_language}"
+        )
         return forced_language
 
     if force_detected_language_to:
-        logging.debug(f"ENV FORCE_DETECTED_LANGUAGE_TO is set: Forcing detected language to {force_detected_language_to}")
+        logging.debug(
+            f"ENV FORCE_DETECTED_LANGUAGE_TO is set: Forcing detected language to {force_detected_language_to}"
+        )
         return force_detected_language_to
 
     if audio_tracks is None:
         audio_tracks = get_audio_tracks(file_path)
 
-    preferred_track_language = find_language_audio_track(audio_tracks, preferred_audio_languages)
+    preferred_track_language = find_language_audio_track(
+        audio_tracks, preferred_audio_languages
+    )
 
     if preferred_track_language:
         return preferred_track_language
@@ -1809,7 +2229,8 @@ def choose_transcribe_language(file_path, forced_language, audio_tracks=None):
         return default_language
 
     return LanguageCode.NONE
-    
+
+
 def get_audio_tracks(video_file):
     """
     Extracts information about the audio tracks in a file.
@@ -1829,52 +2250,59 @@ def get_audio_tracks(video_file):
     """
     try:
         # Probe the file to get audio stream metadata
-        probe = ffmpeg.probe(video_file, select_streams='a')
-        audio_streams = probe.get('streams',[])
-        
+        probe = ffmpeg.probe(video_file, select_streams="a")
+        audio_streams = probe.get("streams", [])
+
         # Extract information for each audio track
-        audio_tracks =[]
+        audio_tracks = []
         for stream in audio_streams:
             audio_track = {
                 "index": int(stream.get("index", 0)),
                 "codec": stream.get("codec_name", "Unknown"),
                 "channels": int(stream.get("channels", 0)),
-                "language": LanguageCode.from_iso_639_2(stream.get("tags", {}).get("language", "Unknown")),
+                "language": LanguageCode.from_iso_639_2(
+                    stream.get("tags", {}).get("language", "Unknown")
+                ),
                 "title": stream.get("tags", {}).get("title", "None"),
                 "default": stream.get("disposition", {}).get("default", 0) == 1,
                 "forced": stream.get("disposition", {}).get("forced", 0) == 1,
                 "original": stream.get("disposition", {}).get("original", 0) == 1,
-                "commentary": "commentary" in stream.get("tags", {}).get("title", "").lower()
+                "commentary": "commentary"
+                in stream.get("tags", {}).get("title", "").lower(),
             }
-            audio_tracks.append(audio_track) 
+            audio_tracks.append(audio_track)
         return audio_tracks
 
     except ffmpeg.Error as e:
         logging.error(f"FFmpeg error: {e.stderr}")
-        return[]
+        return []
     except Exception as e:
-        logging.error(f"An error occurred while reading audio track information: {str(e)}")
-        return[]
+        logging.error(
+            f"An error occurred while reading audio track information: {str(e)}"
+        )
+        return []
+
 
 def find_language_audio_track(audio_tracks, find_languages):
     """
     Checks if an audio track with any of the given languages is present in the list of audio tracks.
     Returns the first language from `find_languages` that matches.
-    
+
     Args:
         audio_tracks (list): A list of dictionaries containing information about each audio track.
         find_languages (list): A list language codes to search for.
-    
+
     Returns:
         str or None: The first language found from `find_languages`, or None if no match is found.
     """
     for language in find_languages:
         for track in audio_tracks:
-            if track['language'] == language:
+            if track["language"] == language:
                 return language
     return None
 
-def find_default_audio_track_language(audio_tracks): 
+
+def find_default_audio_track_language(audio_tracks):
     """
     Finds the language of the default audio track in the given list of audio tracks.
 
@@ -1886,16 +2314,24 @@ def find_default_audio_track_language(audio_tracks):
         str: The ISO 639-2 code of the language of the default audio track, or None if no default track was found.
     """
     for track in audio_tracks:
-        if track['default'] is True:
-            return track['language']
+        if track["default"] is True:
+            return track["language"]
     return None
-    
-def gen_subtitles_queue(file_path: str, transcription_type: str, force_language: LanguageCode = LanguageCode.NONE, **task_kwargs) -> None:
+
+
+def gen_subtitles_queue(
+    file_path: str,
+    transcription_type: str,
+    force_language: LanguageCode = LanguageCode.NONE,
+    **task_kwargs,
+) -> None:
     global task_queue
 
     # Check if this file is already in the queue or being processed
     if task_queue.is_active(file_path):
-        logging.debug(f"Ignored: {os.path.basename(file_path)} is already queued or processing.")
+        logging.debug(
+            f"Ignored: {os.path.basename(file_path)} is already queued or processing."
+        )
         return
 
     if not has_audio(file_path):
@@ -1904,31 +2340,36 @@ def gen_subtitles_queue(file_path: str, transcription_type: str, force_language:
 
     # Probe audio tracks once and pass to both helpers to avoid triple ffprobe
     audio_tracks = get_audio_tracks(file_path)
-    audio_langs = [track['language'] for track in audio_tracks]
+    audio_langs = [track["language"] for track in audio_tracks]
 
-    force_language = choose_transcribe_language(file_path, force_language, audio_tracks=audio_tracks)
+    force_language = choose_transcribe_language(
+        file_path, force_language, audio_tracks=audio_tracks
+    )
 
     if should_skip_file(file_path, force_language, audio_langs=audio_langs):
         return
 
     # Detect audio language via Whisper if no language is known and detection is enabled
     if not force_language and should_whisper_detect_audio_language:
-        detect_task = {'path': file_path, 'type': "detect_language"}
+        detect_task = {"path": file_path, "type": "detect_language"}
         detect_task.update(task_kwargs)
         task_queue.put(detect_task)
         return
 
     task = {
-        'path': file_path,
-        'transcribe_or_translate': transcription_type,
-        'force_language': force_language,
-        'audio_tracks': audio_tracks,  # cached — avoids re-probing in gen_subtitles
+        "path": file_path,
+        "transcribe_or_translate": transcription_type,
+        "force_language": force_language,
+        "audio_tracks": audio_tracks,  # cached — avoids re-probing in gen_subtitles
     }
     task.update(task_kwargs)
 
     task_queue.put(task)
 
-def should_skip_file(file_path: str, target_language: LanguageCode, audio_langs=None) -> bool:
+
+def should_skip_file(
+    file_path: str, target_language: LanguageCode, audio_langs=None
+) -> bool:
     """
     Determines if subtitle generation should be skipped for a file.
 
@@ -1942,8 +2383,10 @@ def should_skip_file(file_path: str, target_language: LanguageCode, audio_langs=
     """
     base_name = os.path.basename(file_path)
     file_name, file_ext = os.path.splitext(base_name)
-    if transcribe_or_translate == 'translate':
-        target_language = LanguageCode.ENGLISH  # Force our target language as english if we are translating
+    if transcribe_or_translate == "translate":
+        target_language = (
+            LanguageCode.ENGLISH
+        )  # Force our target language as english if we are translating
 
     # 1. Skip if it's an audio file and an LRC file already exists.
     if is_audio_file_extension(file_ext) and lrc_for_audio_files:
@@ -1955,10 +2398,16 @@ def should_skip_file(file_path: str, target_language: LanguageCode, audio_langs=
     # 2. Audio language is unknown — two independent skip conditions for this case.
     if target_language == LanguageCode.NONE:
         if skip_unknown_language:
-            logging.info(f"Skipping {base_name}: Audio language unknown and SKIP_UNKNOWN_LANGUAGE is enabled.")
+            logging.info(
+                f"Skipping {base_name}: Audio language unknown and SKIP_UNKNOWN_LANGUAGE is enabled."
+            )
             return True
-        if skip_if_no_audio_language_but_subtitles_exist and get_subtitle_languages(file_path):
-            logging.info(f"Skipping {base_name}: Audio language unknown but internal subtitles already exist.")
+        if skip_if_no_audio_language_but_subtitles_exist and get_subtitle_languages(
+            file_path
+        ):
+            logging.info(
+                f"Skipping {base_name}: Audio language unknown but internal subtitles already exist."
+            )
             return True
 
     # 3. Audio track checks (cheap — audio_langs pre-fetched by caller).
@@ -1969,7 +2418,9 @@ def should_skip_file(file_path: str, target_language: LanguageCode, audio_langs=
     if limit_to_preferred_audio_languages:
         if not any(lang in preferred_audio_languages for lang in audio_langs):
             preferred_names = [lang.to_name() for lang in preferred_audio_languages]
-            logging.info(f"Skipping {base_name}: No preferred audio tracks found (looking for {', '.join(preferred_names)})")
+            logging.info(
+                f"Skipping {base_name}: No preferred audio tracks found (looking for {', '.join(preferred_names)})"
+            )
             return True
 
     # 3b. Skip if audio language is in the explicit skip list.
@@ -1981,50 +2432,83 @@ def should_skip_file(file_path: str, target_language: LanguageCode, audio_langs=
     if skip_if_target_subtitle_exists:
         if subtitle_exists_in_language(file_path, target_language):
             if target_language == LanguageCode.NONE:
-                logging.info(f"Skipping {base_name}: Subtitles already exist and audio language could not be detected from file metadata.")
+                logging.info(
+                    f"Skipping {base_name}: Subtitles already exist and audio language could not be detected from file metadata."
+                )
             else:
                 lang_name = target_language.to_name()
-                logging.info(f"Skipping {base_name}: Subtitles already exist in {lang_name}.")
+                logging.info(
+                    f"Skipping {base_name}: Subtitles already exist in {lang_name}."
+                )
             return True
 
         # Since SUBTITLE_LANGUAGE_NAME overrides the output filename, check if it exists in the folder.
-        if subtitle_language_name and LanguageCode.is_valid_language(subtitle_language_name):
+        if subtitle_language_name and LanguageCode.is_valid_language(
+            subtitle_language_name
+        ):
             external_lang = LanguageCode.from_string(subtitle_language_name)
-            if has_external_subtitle_in_language(file_path, external_lang, recursion=True, only_match_subgen_subtitles=only_match_subgen_subtitles):
-                logging.info(f"Skipping {base_name}: Subtitles already exist in custom name '{subtitle_language_name}'.")
+            if has_external_subtitle_in_language(
+                file_path,
+                external_lang,
+                recursion=True,
+                only_match_subgen_subtitles=only_match_subgen_subtitles,
+            ):
+                logging.info(
+                    f"Skipping {base_name}: Subtitles already exist in custom name '{subtitle_language_name}'."
+                )
                 return True
 
         # Check: Does the exact file Subgen intends to create already exist?
         expected_output = name_subtitle(file_path, target_language)
         if os.path.exists(expected_output):
-            logging.info(f"Skipping {base_name}: Generated subtitle '{os.path.basename(expected_output)}' already exists.")
+            logging.info(
+                f"Skipping {base_name}: Generated subtitle '{os.path.basename(expected_output)}' already exists."
+            )
             return True
 
     # 5. Internal subtitle checks (grouped — both examine streams inside the container).
 
     # 5a. Skip if an internal subtitle exists in the specifically configured language.
-    if skip_if_internal_sub_language and has_internal_subtitle_in_language(file_path, skip_if_internal_sub_language):
+    if skip_if_internal_sub_language and has_internal_subtitle_in_language(
+        file_path, skip_if_internal_sub_language
+    ):
         lang_name = skip_if_internal_sub_language.to_name()
-        logging.info(f"Skipping {base_name}: Internal subtitles in {lang_name} already exist.")
+        logging.info(
+            f"Skipping {base_name}: Internal subtitles in {lang_name} already exist."
+        )
         return True
 
     # 5b. Skip if any embedded subtitle language is in the skip list.
-    if skip_subtitle_languages and any(lang in skip_subtitle_languages for lang in get_subtitle_languages(file_path)):
+    if skip_subtitle_languages and any(
+        lang in skip_subtitle_languages for lang in get_subtitle_languages(file_path)
+    ):
         logging.info(f"Skipping {base_name}: Contains a skipped subtitle language.")
         return True
 
     # 6. Skip if an external subtitle exists matching the custom subtitle_language_name.
     #    Note: this overlaps with check 4b when skip_if_target_subtitle_exists is also True;
     #    it only adds distinct behaviour when skip_if_target_subtitle_exists is False.
-    if skip_if_external_sub_exists and subtitle_language_name and LanguageCode.is_valid_language(subtitle_language_name):
+    if (
+        skip_if_external_sub_exists
+        and subtitle_language_name
+        and LanguageCode.is_valid_language(subtitle_language_name)
+    ):
         external_lang = LanguageCode.from_string(subtitle_language_name)
-        if has_external_subtitle_in_language(file_path, external_lang, recursion=True, only_match_subgen_subtitles=only_match_subgen_subtitles):
+        if has_external_subtitle_in_language(
+            file_path,
+            external_lang,
+            recursion=True,
+            only_match_subgen_subtitles=only_match_subgen_subtitles,
+        ):
             lang_name = external_lang.to_name()
-            logging.info(f"Skipping {base_name}: External subtitles in {lang_name} already exist.")
+            logging.info(
+                f"Skipping {base_name}: External subtitles in {lang_name} already exist."
+            )
             return True
 
     return False
-    
+
+
 def get_subtitle_languages(video_path):
     """
     Extract language codes from each subtitle stream in the video file using pyav.
@@ -2036,7 +2520,7 @@ def get_subtitle_languages(video_path):
     try:
         with av.open(video_path) as container:
             for stream in container.streams.subtitles:
-                lang_code = stream.metadata.get('language')
+                lang_code = stream.metadata.get("language")
                 if lang_code:
                     languages.append(LanguageCode.from_iso_639_2(lang_code))
                 else:
@@ -2046,6 +2530,7 @@ def get_subtitle_languages(video_path):
 
     return languages
 
+
 def get_audio_languages(video_path):
     """
     Extract language codes from each audio stream in the video file.
@@ -2054,7 +2539,8 @@ def get_audio_languages(video_path):
     :return: List of language codes for each audio stream
     """
     audio_tracks = get_audio_tracks(video_path)
-    return [track['language'] for track in audio_tracks] 
+    return [track["language"] for track in audio_tracks]
+
 
 def subtitle_exists_in_language(video_file, target_language: LanguageCode):
     """
@@ -2070,9 +2556,19 @@ def subtitle_exists_in_language(video_file, target_language: LanguageCode):
     Returns:
         bool: True if a subtitle file with the target language is found, False otherwise.
     """
-    return has_internal_subtitle_in_language(video_file, target_language) or has_external_subtitle_in_language(video_file, target_language, recursion=True, only_match_subgen_subtitles=only_match_subgen_subtitles)
+    return has_internal_subtitle_in_language(
+        video_file, target_language
+    ) or has_external_subtitle_in_language(
+        video_file,
+        target_language,
+        recursion=True,
+        only_match_subgen_subtitles=only_match_subgen_subtitles,
+    )
 
-def has_internal_subtitle_in_language(video_file: str, target_language: LanguageCode) -> bool:
+
+def has_internal_subtitle_in_language(
+    video_file: str, target_language: LanguageCode
+) -> bool:
     """
     Checks whether a video container has an embedded subtitle track in the given language.
 
@@ -2086,17 +2582,27 @@ def has_internal_subtitle_in_language(video_file: str, target_language: Language
     try:
         with av.open(video_file) as container:
             for stream in container.streams:
-                if stream.type == 'subtitle' and 'language' in stream.metadata:
-                    stream_language = LanguageCode.from_string(stream.metadata.get('language', '').lower())
+                if stream.type == "subtitle" and "language" in stream.metadata:
+                    stream_language = LanguageCode.from_string(
+                        stream.metadata.get("language", "").lower()
+                    )
                     if stream_language == target_language:
                         return True
             return False
 
     except Exception as e:
-        logging.error(f"An error occurred while checking the file with pyav: {type(e).__name__}: {e}")
+        logging.error(
+            f"An error occurred while checking the file with pyav: {type(e).__name__}: {e}"
+        )
         return False
 
-def has_external_subtitle_in_language(video_file: str, target_language: LanguageCode, recursion: bool = True, only_match_subgen_subtitles: bool = False) -> bool:
+
+def has_external_subtitle_in_language(
+    video_file: str,
+    target_language: LanguageCode,
+    recursion: bool = True,
+    only_match_subgen_subtitles: bool = False,
+) -> bool:
     """Checks if the given folder has a subtitle file with the given language.
     Args:
         video_file (str): The path of the video file.
@@ -2106,7 +2612,18 @@ def has_external_subtitle_in_language(video_file: str, target_language: Language
     Returns:
         bool: True if a matching subtitle file is found, False otherwise.
     """
-    subtitle_extensions = {'.srt', '.vtt', '.sub', '.ass', '.ssa', '.idx', '.sbv', '.pgs', '.ttml', '.lrc'}
+    subtitle_extensions = {
+        ".srt",
+        ".vtt",
+        ".sub",
+        ".ass",
+        ".ssa",
+        ".idx",
+        ".sbv",
+        ".pgs",
+        ".ttml",
+        ".lrc",
+    }
 
     video_folder = os.path.dirname(video_file)
     video_name = os.path.splitext(os.path.basename(video_file))[0]
@@ -2128,7 +2645,7 @@ def has_external_subtitle_in_language(video_file: str, target_language: Language
                 continue
 
             # Extract parts after video filename
-            subtitle_parts = subtitle_name[len(video_name):].lstrip(".").split(".")
+            subtitle_parts = subtitle_name[len(video_name) :].lstrip(".").split(".")
 
             # Check for "subgen"
             has_subgen = "subgen" in subtitle_parts
@@ -2137,27 +2654,40 @@ def has_external_subtitle_in_language(video_file: str, target_language: Language
             if target_language == LanguageCode.NONE:
                 if only_match_subgen_subtitles:
                     if has_subgen:
-                        return True   # Subgen subtitle exists → counts as covered → skip
-                    continue          # Non-subgen subtitle → ignore, keep looking
-                return True           # Any subtitle found → skip
+                        return True  # Subgen subtitle exists → counts as covered → skip
+                    continue  # Non-subgen subtitle → ignore, keep looking
+                return True  # Any subtitle found → skip
 
             # Check if the subtitle file matches the target language
             if is_valid_subtitle_language(subtitle_parts, target_language):
                 if only_match_subgen_subtitles and not has_subgen:
                     continue  # Ignore non-subgen subtitles if flag is set
-                logging.debug(f"Found matching subtitle: {file_name} for language {target_language.name} (subgen={has_subgen})")
+                logging.debug(
+                    f"Found matching subtitle: {file_name} for language {target_language.name} (subgen={has_subgen})"
+                )
                 return True
 
         # Recursively search subfolders
         elif os.path.isdir(file_path) and recursion:
-            if has_external_subtitle_in_language(os.path.join(file_path, os.path.basename(video_file)), target_language, False, only_match_subgen_subtitles):
+            if has_external_subtitle_in_language(
+                os.path.join(file_path, os.path.basename(video_file)),
+                target_language,
+                False,
+                only_match_subgen_subtitles,
+            ):
                 return True
 
     return False
 
-def is_valid_subtitle_language(subtitle_parts: List[str], target_language: LanguageCode) -> bool:
+
+def is_valid_subtitle_language(
+    subtitle_parts: List[str], target_language: LanguageCode
+) -> bool:
     """Checks if any part of the subtitle name matches the target language."""
-    return any(LanguageCode.from_string(part) == target_language for part in subtitle_parts)
+    return any(
+        LanguageCode.from_string(part) == target_language for part in subtitle_parts
+    )
+
 
 def get_next_plex_episode(current_episode_rating_key, stay_in_season: bool = False):
     """
@@ -2188,24 +2718,30 @@ def get_next_plex_episode(current_episode_rating_key, stay_in_season: bool = Fal
         # Find the parent season ratingKey
         parent_rating_key = root.find(".//Video").get("parentRatingKey")
         if parent_rating_key is None:
-            logging.debug(f"Parent season not found for episode {current_episode_rating_key}")
+            logging.debug(
+                f"Parent season not found for episode {current_episode_rating_key}"
+            )
             return None
 
         # Get the list of seasons
         url = f"{plexserver}/library/metadata/{grandparent_rating_key}/children"
         response = requests.get(url, headers=headers)
         response.raise_for_status()
-        seasons = ET.fromstring(response.content).findall(".//Directory[@type='season']")
+        seasons = ET.fromstring(response.content).findall(
+            ".//Directory[@type='season']"
+        )
 
         # Get the list of episodes in the parent season
         url = f"{plexserver}/library/metadata/{parent_rating_key}/children"
         response = requests.get(url, headers=headers)
         response.raise_for_status()
-        #print(response.content)
+        # print(response.content)
 
         # Parse XML response for the list of episodes
         episodes = ET.fromstring(response.content).findall(".//Video")
-        episodes_in_season = len(episodes) #episodes.get('size') # changed from episodes.get("size") because size is not available
+        episodes_in_season = len(
+            episodes
+        )  # episodes.get('size') # changed from episodes.get("size") because size is not available
 
         # Find the current episode index and get the next one
         current_episode_number = None
@@ -2215,49 +2751,66 @@ def get_next_plex_episode(current_episode_rating_key, stay_in_season: bool = Fal
             if episode.get("ratingKey") == current_episode_rating_key:
                 ep_index = episode.get("index")
                 if ep_index is None:
-                    logging.warning(f"Episode ratingKey {current_episode_rating_key} has no index attribute")
+                    logging.warning(
+                        f"Episode ratingKey {current_episode_rating_key} has no index attribute"
+                    )
                     return None
                 current_episode_number = int(ep_index)
                 current_season_number = episode.get("parentIndex")
                 break
-            #if rating_key_element is None:
+            # if rating_key_element is None:
             #    logging.warning(f"ratingKey not found for episode at index")
             #    continue
 
         # Logic to find the next episode
         if stay_in_season:
-          if current_episode_number == episodes_in_season:
-              return None # End of season
-          for episode in episodes:
-            ep_index = episode.get("index")
-            if ep_index is not None and int(ep_index) == int(current_episode_number)+1:
-                return episode.get("ratingKey")
-        else: # Not staying in season, find the next overall episode
-          # Find next season if it exists
-          for season in seasons:
-              s_index = season.get("index")
-              if s_index is not None and int(s_index) == int(current_season_number)+1:
-                  #print(f"next season is: {episode.get('ratingKey')}")
-                  #print(season.get("title"))
-                  next_season_number = season.get("ratingKey")
-                  break
+            if current_episode_number == episodes_in_season:
+                return None  # End of season
+            for episode in episodes:
+                ep_index = episode.get("index")
+                if (
+                    ep_index is not None
+                    and int(ep_index) == int(current_episode_number) + 1
+                ):
+                    return episode.get("ratingKey")
+        else:  # Not staying in season, find the next overall episode
+            # Find next season if it exists
+            for season in seasons:
+                s_index = season.get("index")
+                if (
+                    s_index is not None
+                    and int(s_index) == int(current_season_number) + 1
+                ):
+                    # print(f"next season is: {episode.get('ratingKey')}")
+                    # print(season.get("title"))
+                    next_season_number = season.get("ratingKey")
+                    break
 
-          if current_episode_number == episodes_in_season: # changed to episodes_in_season from int(episodes_in_season)
-              if next_season_number is not None:
-                logging.debug("At end of season, try to find next season and first episode.")
-                url = f"{plexserver}/library/metadata/{next_season_number}/children"
-                response = requests.get(url, headers=headers)
-                response.raise_for_status()
-                episodes = ET.fromstring(response.content).findall(".//Video")
-                current_episode_number = 0
-              else:
-                return None
-          for episode in episodes:
-            ep_index = episode.get("index")
-            if ep_index is not None and int(ep_index) == int(current_episode_number)+1:
-                return episode.get("ratingKey")
+            if (
+                current_episode_number == episodes_in_season
+            ):  # changed to episodes_in_season from int(episodes_in_season)
+                if next_season_number is not None:
+                    logging.debug(
+                        "At end of season, try to find next season and first episode."
+                    )
+                    url = f"{plexserver}/library/metadata/{next_season_number}/children"
+                    response = requests.get(url, headers=headers)
+                    response.raise_for_status()
+                    episodes = ET.fromstring(response.content).findall(".//Video")
+                    current_episode_number = 0
+                else:
+                    return None
+            for episode in episodes:
+                ep_index = episode.get("index")
+                if (
+                    ep_index is not None
+                    and int(ep_index) == int(current_episode_number) + 1
+                ):
+                    return episode.get("ratingKey")
 
-        logging.debug(f"No next episode found for {get_plex_file_name(current_episode_rating_key, plexserver, plextoken)}, possibly end of season or series")
+        logging.debug(
+            f"No next episode found for {get_plex_file_name(current_episode_rating_key, plexserver, plextoken)}, possibly end of season or series"
+        )
         return None
 
     except requests.exceptions.RequestException as e:
@@ -2266,6 +2819,7 @@ def get_next_plex_episode(current_episode_rating_key, stay_in_season: bool = Fal
     except Exception as e:
         logging.error(f"An unexpected error occurred: {e}")
         return None
+
 
 def get_plex_file_name(itemid: str, server_ip: str, plex_token: str) -> str:
     """Gets the full path to a file from the Plex server.
@@ -2290,20 +2844,21 @@ def get_plex_file_name(itemid: str, server_ip: str, plex_token: str) -> str:
         part = root.find(".//Part")
         if part is None:
             raise Exception("No Part element found in Plex XML response")
-        fullpath = part.attrib['file']
+        fullpath = part.attrib["file"]
         return fullpath
     else:
         raise Exception(f"Error: {response.status_code}")
 
+
 def refresh_plex_metadata(itemid: str, server_ip: str, plex_token: str) -> None:
     """
     Refreshes the metadata of a Plex library item.
-    
+
     Args:
         itemid: The ID of the item in the Plex library whose metadata needs to be refreshed.
         server_ip: The IP address of the Plex server.
         plex_token: The Plex token used for authentication.
-        
+
     Raises:
         Exception: If the server does not respond with a successful status code.
     """
@@ -2325,15 +2880,16 @@ def refresh_plex_metadata(itemid: str, server_ip: str, plex_token: str) -> None:
     else:
         raise Exception(f"Error refreshing metadata: {response.status_code}")
 
+
 def refresh_jellyfin_metadata(itemid: str, server_ip: str, jellyfin_token: str) -> None:
     """
     Refreshes the metadata of a Jellyfin library item.
-    
+
     Args:
         itemid: The ID of the item in the Jellyfin library whose metadata needs to be refreshed.
         server_ip: The IP address of the Jellyfin server.
         jellyfin_token: The Jellyfin token used for authentication.
-        
+
     Raises:
         Exception: If the server does not respond with a successful status code.
     """
@@ -2373,13 +2929,16 @@ def get_jellyfin_file_name(item_id: str, jellyfin_url: str, jellyfin_token: str)
     users = json.loads(requests.get(f"{jellyfin_url}/Users", headers=headers).content)
     jellyfin_admin = get_jellyfin_admin(users)
 
-    response = requests.get(f"{jellyfin_url}/Users/{jellyfin_admin}/Items/{item_id}", headers=headers)
+    response = requests.get(
+        f"{jellyfin_url}/Users/{jellyfin_admin}/Items/{item_id}", headers=headers
+    )
 
     if response.status_code == 200:
-        file_name = json.loads(response.content)['Path']
+        file_name = json.loads(response.content)["Path"]
         return file_name
     else:
         raise Exception(f"Error: {response.status_code}")
+
 
 def get_jellyfin_admin(users):
     for user in users:
@@ -2387,6 +2946,7 @@ def get_jellyfin_admin(users):
             return user["Id"]
 
     raise Exception("Unable to find administrator user in Jellyfin")
+
 
 def has_audio(file_path):
     try:
@@ -2399,45 +2959,55 @@ def has_audio(file_path):
         with av.open(file_path) as container:
             # Check for an audio stream and ensure it has a valid codec
             for stream in container.streams:
-                if stream.type == 'audio':
+                if stream.type == "audio":
                     # Check if the stream has a codec and if it is valid
-                    if stream.codec_context and stream.codec_context.name != 'none':
+                    if stream.codec_context and stream.codec_context.name != "none":
                         return True
                     else:
-                        logging.debug(f"Unsupported or missing codec for audio stream in {file_path}")
+                        logging.debug(
+                            f"Unsupported or missing codec for audio stream in {file_path}"
+                        )
             return False
 
     except (av.FFmpegError, UnicodeDecodeError):
         logging.debug(f"Error processing file {file_path}")
         return False
 
+
 def is_valid_path(file_path):
     # Check if the path is a file
     if not os.path.isfile(file_path):
         # If it's not a file, check if it's a directory
         if not os.path.isdir(file_path):
-            logging.warning(f"{file_path} is neither a file nor a directory. Are your volumes correct?")
+            logging.warning(
+                f"{file_path} is neither a file nor a directory. Are your volumes correct?"
+            )
             return False
         else:
             logging.debug(f"{file_path} is a directory, skipping processing as a file.")
             return False
     else:
-        return True    
+        return True
+
 
 def has_video_extension(file_name):
-    file_extension = os.path.splitext(file_name)[1].lower() # Get the file extension
+    file_extension = os.path.splitext(file_name)[1].lower()  # Get the file extension
     return file_extension in VIDEO_EXTENSIONS
 
+
 def has_audio_extension(file_name):
-    file_extension = os.path.splitext(file_name)[1].lower() # Get the file extension
+    file_extension = os.path.splitext(file_name)[1].lower()  # Get the file extension
     return file_extension in AUDIO_EXTENSIONS
 
 
 def path_mapping(fullpath):
     if use_path_mapping:
-        logging.debug("Updated path: " + fullpath.replace(path_mapping_from, path_mapping_to))
+        logging.debug(
+            "Updated path: " + fullpath.replace(path_mapping_from, path_mapping_to)
+        )
         return fullpath.replace(path_mapping_from, path_mapping_to)
     return fullpath
+
 
 def is_file_stable(file_path, wait_time=2, check_intervals=3):
     """Returns True if the file size is stable for a given number of checks."""
@@ -2457,6 +3027,7 @@ def is_file_stable(file_path, wait_time=2, check_intervals=3):
         time.sleep(wait_time)
 
     return False  # File is still changing
+
 
 class NewFileHandler(FileSystemEventHandler):
     """Watchdog handler that queues newly created or modified media files."""
@@ -2481,7 +3052,9 @@ class NewFileHandler(FileSystemEventHandler):
         self.handle_event(event)
 
 
-def transcribe_existing(transcribe_folders, forceLanguage: LanguageCode = LanguageCode.NONE):
+def transcribe_existing(
+    transcribe_folders, forceLanguage: LanguageCode = LanguageCode.NONE
+):
     transcribe_folders = transcribe_folders.split("|")
     logging.info("Starting to search folders to see if we need to create subtitles.")
     logging.debug("The folders are:")
@@ -2490,11 +3063,15 @@ def transcribe_existing(transcribe_folders, forceLanguage: LanguageCode = Langua
         for root, dirs, files in os.walk(path):
             for file in files:
                 file_path = os.path.join(root, file)
-                gen_subtitles_queue(path_mapping(file_path), transcribe_or_translate, forceLanguage)
+                gen_subtitles_queue(
+                    path_mapping(file_path), transcribe_or_translate, forceLanguage
+                )
         # if the path specified was actually a single file and not a folder, process it
         if os.path.isfile(path):
             if has_audio(path):
-                gen_subtitles_queue(path_mapping(path), transcribe_or_translate, forceLanguage)
+                gen_subtitles_queue(
+                    path_mapping(path), transcribe_or_translate, forceLanguage
+                )
     # Set up the observer to watch for new files
     if monitor:
         observer = Observer()
@@ -2503,13 +3080,24 @@ def transcribe_existing(transcribe_folders, forceLanguage: LanguageCode = Langua
                 handler = NewFileHandler()
                 observer.schedule(handler, path, recursive=True)
         observer.start()
-        logging.info("Finished searching and queueing files for transcription. Now watching for new files.")
+        logging.info(
+            "Finished searching and queueing files for transcription. Now watching for new files."
+        )
 
 
 if __name__ == "__main__":
     import uvicorn
+
     logging.info(f"Subgen (Qwen3-ASR) v{subgen_version}")
-    logging.info(f"Threads: {str(whisper_threads)}, Concurrent transcriptions: {str(concurrent_transcriptions)}")
+    logging.info(
+        f"Threads: {str(whisper_threads)}, Concurrent transcriptions: {str(concurrent_transcriptions)}"
+    )
     logging.info(f"Transcribe device: {transcribe_device}, Model: {whisper_model}")
-    os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
-    uvicorn.run("__main__:app", host="0.0.0.0", port=int(webhookport), reload=reload_script_on_change, use_colors=True)
+    os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+    uvicorn.run(
+        "__main__:app",
+        host="0.0.0.0",
+        port=int(webhookport),
+        reload=reload_script_on_change,
+        use_colors=True,
+    )
