@@ -405,12 +405,15 @@ class QwenASRResult:
             self.segments = [QwenASRSegment(qwen_result.text, 0.0, 0.01, 0)]
 
     def _build_sentence_segments(self, qwen_result):
-        """Merge token-level timestamps into sentence-level segments.
+        """Merge token-level timestamps into natural phrase-level segments.
         
-        Tokens are grouped until a sentence-ending punctuation is encountered
-        or a significant time gap (> 0.5s) is detected.
+        Tokens are accumulated until a significant time gap (> 1.0s) is 
+        detected, indicating a natural pause in speech. Unlike the previous
+        approach, we do NOT split on punctuation — the forced aligner's
+        token-level timestamps reflect speech rhythm, and punctuation is
+        often inferred by the ASR rather than spoken.
         """
-        MAX_GAP = 0.5  # seconds between tokens to force a split
+        MAX_GAP = 1.0  # seconds of silence to force a split
 
         segments = []
         current_text = ""
@@ -427,7 +430,6 @@ class QwenASRResult:
                 current_text = text
                 seg_end = ts.end_time
             elif ts.start_time - seg_end > MAX_GAP:
-                # Time gap too large, flush current segment
                 if current_text.strip():
                     segments.append(QwenASRSegment(current_text, seg_start, seg_end, len(segments)))
                 seg_start = ts.start_time
@@ -437,14 +439,6 @@ class QwenASRResult:
                 current_text += text
                 seg_end = ts.end_time
 
-            # Check if we should split on sentence-ending punctuation
-            if text and text[-1] in self._SENTENCE_ENDS:
-                if current_text.strip():
-                    segments.append(QwenASRSegment(current_text, seg_start, seg_end, len(segments)))
-                seg_start = None
-                current_text = ""
-
-        # Flush remaining
         if current_text.strip():
             segments.append(QwenASRSegment(current_text, seg_start, seg_end, len(segments)))
 
